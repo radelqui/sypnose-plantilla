@@ -126,6 +126,6 @@ roles:
 # tipo:x / vitalidad:x). "sql" es la consulta que la vista representa; "consola" es lo que se guarda en
 # vista_guardada. Sin "consola", la vista no se crea: planes, evidencias y actores no son nodos (FASE3.md §8).
 vistas:
-  - {nombre: "Oferta contestada", sql: "plan.id LIKE 'PLAN-%-T%'", consola: {ambito: plantilla}}
+  - {nombre: "Molde y sus instancias (solo nodos)", sql: "plan.id LIKE 'PLAN-%-T%'", consola: {ambito: plantilla}}
   - {nombre: "Pruebas de bloqueo", sql: "evidencia.fuente LIKE 'bloqueo:%'"}
   - {nombre: "Actores y modelos", sql: "actor.clase='ia'"}
