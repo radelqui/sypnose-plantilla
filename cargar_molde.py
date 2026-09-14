@@ -178,7 +178,7 @@ def main() -> None:
         for v in oferta.get("vistas", []):
             consola = v.get("consola")
             if not consola:
-                k.avisos.append(f"vista {v['nombre']!r} no creada: la consola solo filtra nodos y '{v['sql']}' no es un filtro de nodos")
+                k.avisos.append(f"vista {v['nombre']!r} no creada: sin bloque 'consola' (la consola solo filtra nodos; ver consultas.sql)")
                 continue
             if conn.execute("SELECT 1 FROM vista_guardada WHERE nombre=? AND estado='activa'", (v["nombre"],)).fetchone():
                 k.existian.append(f"vista {v['nombre']}")
@@ -187,7 +187,7 @@ def main() -> None:
                 "INSERT INTO vista_guardada (nombre, ambito, chip, filtro, creada_en, creada_por) VALUES (?, ?, ?, ?, ?, ?)",
                 (v["nombre"], consola.get("ambito"), consola.get("chip"), consola.get("filtro"), ahora(), args.actor),
             )
-            k.evento("vista_guardada", f"{v['nombre']} · consola {consola} · representa: {v['sql']}", nodo_id=nodo)
+            k.evento("vista_guardada", f"{v['nombre']} · consola {consola}", nodo_id=nodo)
             k.altas.append(f"vista {v['nombre']}")
 
         conn.execute("ROLLBACK" if args.dry_run else "COMMIT")

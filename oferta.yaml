@@ -123,10 +123,10 @@ roles:
   06-frontend: {modelo: claude-sonnet-5}
   07-verificador: {modelo: claude-opus-5}
   00-lead: {modelo: claude-fable-5-1}
-# Las vistas guardadas de la consola SYPNOSE solo filtran la rejilla de NODOS (ámbito, chip y tokens de filtro
-# tipo:x / vitalidad:x). "sql" es la consulta que la vista representa; "consola" es lo que se guarda en
-# vista_guardada. Sin "consola", la vista no se crea: planes, evidencias y actores no son nodos (FASE3.md §8).
+# Vistas guardadas de la consola SYPNOSE: solo filtran la rejilla de NODOS (ámbito, chip y tokens tipo:x / vitalidad:x).
+# Las consultas sobre planes, evidencias y actores ("Oferta contestada", "Pruebas de bloqueo", "Actores y modelos")
+# no pueden ser vista guardada: están en consultas.sql (decisión 00-lead 14-sep; limitación para la fase de SYPNOSE).
+# Regla de bloqueos (decisión b): todo bloqueo deja evidencia con fuente 'bloqueo:<tipo>' en su plan, además del evento.
 vistas:
-  - {nombre: "Molde y sus instancias (solo nodos)", sql: "plan.id LIKE 'PLAN-%-T%'", consola: {ambito: plantilla}}
-  - {nombre: "Pruebas de bloqueo", sql: "evidencia.fuente LIKE 'bloqueo:%'"}
-  - {nombre: "Actores y modelos", sql: "actor.clase='ia'"}
+  - {nombre: "Molde y sus instancias (solo nodos)", consola: {ambito: plantilla}}
+consultas: consultas.sql
