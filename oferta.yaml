@@ -71,7 +71,8 @@ lineas:
     oferta: "Knowledge of relational databases such as PostgreSQL"
     plan: "pgvector híbrido con rol de solo lectura"
     clase: investigar
-    ears: "Cuando el rol ai_readonly ejecute una consulta híbrida, el plan de ejecución DEBE usar idx_docs_hnsw y el rol NO DEBE poder escribir."
+    # corregida 14-sep (aprobada por 00-lead): el nombre idx_docs_hnsw era de Coforge antes de b6fa6ab; el molde exige el tipo de índice, no un nombre
+    ears: "Cuando el rol ai_readonly ejecute una consulta híbrida, el plan de ejecución DEBE usar el índice HNSW de la columna de embeddings y el índice GIN de texto, y el rol NO DEBE poder escribir."
     comprobacion: "tests/integracion/README.md (comando psql) ejecutado en CI con service Postgres"
     rol: 03-datos-rag
     skills: ["data:sql-queries", "data:validate-data"]
