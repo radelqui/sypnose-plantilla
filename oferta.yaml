@@ -1,0 +1,131 @@
+# Molde SYPNOSE: la oferta como estructura de la solución. Fuente de verdad; el registro se carga desde aquí
+# con cargar_molde.py e instanciar.py. Diseño: TRASPASO-3 VERSIÓN 1 (00-lead). Ajustes de comprobación: FASE3.md §8.
+plantilla: microservicio-ia
+oferta: "Python Developer + IA · Coforge/Santander · sep-2026"
+lineas:
+  - id: T-01
+    oferta: "Develop and maintain web applications using Python for backend services"
+    plan: "Backend Python en producción"
+    clase: mantener
+    ears: "Cuando el servicio arranque en modo real y falte una credencial, DEBE fallar antes de readiness con mensaje claro; en modo fake DEBE arrancar sin BD ni LLM."
+    comprobacion: "pytest tests/test_main.py tests/test_engine_mode.py -q"
+    rol: 02-backend-api
+    skills: [api-and-interface-design, test-driven-development]
+    bloqueos_esperados: [rail-bd]
+  - id: T-02
+    oferta: "Program AI agents"
+    plan: "Agente con tools bajo identidad autenticada"
+    clase: migrar
+    ears: "Cuando el cliente autenticado pregunte su saldo, el agente DEBE invocar get_account_balance con el customer_id de la cabecera y NUNCA con uno aportado por el prompt."
+    comprobacion: "pytest tests/test_agent_runtime.py -q"
+    rol: 04-agentes
+    skills: [security-and-hardening, claude-api]
+    bloqueos_esperados: [identidad, guardrail]
+  - id: T-03
+    oferta: "Design, build, and consume RESTful APIs and microservices"
+    plan: "API REST con streaming SSE"
+    clase: mantener
+    ears: "Cuando /consultar reciba una pregunta válida con identidad, DEBE responder text/event-stream con eventos token y done; sin identidad DEBE devolver 401."
+    comprobacion: "pytest tests/test_api.py -q"
+    rol: 02-backend-api
+    skills: [api-and-interface-design]
+    bloqueos_esperados: [identidad]
+  - id: T-04
+    oferta: "Implement responsive and user-friendly interfaces"
+    plan: "Interfaz (deseable)"
+    clase: investigar
+    ears: "Cuando exista frontend, DEBE consumir /consultar por EventSource y mostrar tokens progresivamente."
+    comprobacion: "pendiente: sin frontend aún"
+    rol: 06-frontend
+    skills: [frontend-ui-engineering]
+    bloqueos_esperados: []
+  - id: T-05
+    oferta: "Ensure application performance, scalability, and reliability"
+    plan: "Probes, límites y cierre limpio de streams"
+    clase: mantener
+    ears: "El Deployment DEBE declarar startup/readiness/liveness, requests/limits de memoria y preStop para no cortar SSE."
+    comprobacion: "python -c \"import yaml;d=[x for x in yaml.safe_load_all(open('k8s/deployment.yaml')) if x and x['kind']=='Deployment'][0];c=d['spec']['template']['spec']['containers'][0];assert all(k in c for k in ('startupProbe','readinessProbe','livenessProbe','resources','lifecycle'));print('ok')\""
+    rol: 01-git-cicd
+    skills: [performance-optimization]
+    bloqueos_esperados: []
+  - id: T-06
+    oferta: "Participate in code reviews and development best practices"
+    plan: "Verificación independiente de cada tarea"
+    clase: mantener
+    ears: "Ninguna tarea DEBE pasar a espera_firma sin verificada_por distinto del agente ejecutor."
+    comprobacion: "SELECT COUNT(*) FROM tarea WHERE progreso='espera_firma' AND (verificada_por IS NULL OR verificada_por=agente) → 0"
+    rol: 07-verificador
+    skills: [verification-before-completion, code-review-and-quality, doubt-driven-development, enjambre-adversarial, security-review]
+    bloqueos_esperados: [verificador]
+  - id: T-07
+    oferta: "Participate in CI/CD implementation and deployment processes"
+    plan: "Pipeline con puerta de aprobación humana"
+    clase: mantener
+    ears: "Cuando main pase lint, SAST, secret scanning, tests ≥85% y escaneo de imagen, el job deploy DEBE quedar esperando aprobación manual."
+    # ajuste: sin --repo fijo; se ejecuta dentro del repo de la instancia (gh lo resuelve del remoto origin)
+    comprobacion: "gh run list --branch main --limit 1 --json status,conclusion,url + gh run view <id> (job deploy en waiting)"
+    rol: 01-git-cicd
+    skills: [ci-cd-and-automation, git-workflow-and-versioning]
+    bloqueos_esperados: [ci, gitguardian]
+  - id: T-08
+    oferta: "Knowledge of relational databases such as PostgreSQL"
+    plan: "pgvector híbrido con rol de solo lectura"
+    clase: investigar
+    ears: "Cuando el rol ai_readonly ejecute una consulta híbrida, el plan de ejecución DEBE usar idx_docs_hnsw y el rol NO DEBE poder escribir."
+    comprobacion: "tests/integracion/README.md (comando psql) ejecutado en CI con service Postgres"
+    rol: 03-datos-rag
+    skills: ["data:sql-queries", "data:validate-data"]
+    bloqueos_esperados: [rail-bd]
+  - id: T-09
+    oferta: "Experience with Git and version control best practices"
+    plan: "Trazabilidad por commit"
+    clase: mantener
+    ears: "Cada commit DEBE llevar al pie Chat, Model y Plan; cada chat DEBE trabajar en su rama y worktree."
+    comprobacion: "git log --all --format=%B | grep -c '^Chat:' == git rev-list --all --count (menos el inicial si aplica)"
+    rol: todos
+    skills: [git-workflow-and-versioning]
+    bloqueos_esperados: []
+  - id: T-10
+    oferta: "Understanding of software design principles and object-oriented programming"
+    plan: "Motor intercambiable y tools tipadas"
+    clase: mantener
+    ears: "El motor DEBE cumplir el Protocol QueryEngineLike y ser sustituible (Fake/RAG/Agente) sin tocar routes.py."
+    # ajuste: sin hash fijo de Coforge; se compara contra el commit raíz del repo de la instancia
+    comprobacion: "git diff $(git rev-list --max-parents=0 HEAD)..HEAD -- app/api/routes.py vacío + pytest -q"
+    rol: 04-agentes
+    skills: [api-and-interface-design]
+    bloqueos_esperados: []
+  - id: T-11
+    oferta: "Docker and Kubernetes knowledge"
+    plan: "Imagen endurecida"
+    clase: mantener
+    ears: "La imagen DEBE ejecutar como non-root, con filesystem de solo lectura y sin capabilities."
+    comprobacion: "grep -E 'USER appuser' Dockerfile && grep -E 'readOnlyRootFilesystem: true' k8s/deployment.yaml"
+    rol: 01-git-cicd
+    skills: [docker-security-contabo, security-and-hardening]
+    bloqueos_esperados: []
+  - id: T-12
+    oferta: "Experience or knowledge of Artificial Intelligence and Generative AI concepts"
+    plan: "Guardrails y PII en streaming"
+    clase: mantener
+    ears: "Cuando el LLM emita un IBAN partido en ≥3 tokens, la salida NO DEBE contener ningún dígito; un prompt de inyección DEBE bloquearse antes de gastar tokens."
+    comprobacion: "pytest tests/test_pii.py tests/test_guardrails.py tests/test_api.py -k 'pii or injection' -q"
+    rol: 04-agentes
+    skills: [security-and-hardening]
+    bloqueos_esperados: [guardrail]
+roles:
+  01-git-cicd: {modelo: claude-sonnet-5}
+  02-backend-api: {modelo: claude-sonnet-5}
+  03-datos-rag: {modelo: claude-sonnet-5}
+  04-agentes: {modelo: claude-sonnet-5}
+  05-arquitecto-sypnose: {modelo: claude-opus-5}
+  06-frontend: {modelo: claude-sonnet-5}
+  07-verificador: {modelo: claude-opus-5}
+  00-lead: {modelo: claude-fable-5-1}
+# Las vistas guardadas de la consola SYPNOSE solo filtran la rejilla de NODOS (ámbito, chip y tokens de filtro
+# tipo:x / vitalidad:x). "sql" es la consulta que la vista representa; "consola" es lo que se guarda en
+# vista_guardada. Sin "consola", la vista no se crea: planes, evidencias y actores no son nodos (FASE3.md §8).
+vistas:
+  - {nombre: "Oferta contestada", sql: "plan.id LIKE 'PLAN-%-T%'", consola: {ambito: plantilla}}
+  - {nombre: "Pruebas de bloqueo", sql: "evidencia.fuente LIKE 'bloqueo:%'"}
+  - {nombre: "Actores y modelos", sql: "actor.clase='ia'"}
