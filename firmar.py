@@ -83,6 +83,26 @@ def cmd_firma(args):
     print(f"[OK] {args.nodo} firmado por {args.actor} a las {ts}")
 
 
+def asegurar_nodo_actor(conn, actor_id, actor_escritor):
+    """Crea nodo tipo 'actor' si no existe (afirmacion.nodo_id requiere FK)."""
+    if conn.execute("SELECT 1 FROM nodo WHERE id=?", (actor_id,)).fetchone():
+        return False
+    actor = conn.execute("SELECT clase, rol FROM actor WHERE id=?", (actor_id,)).fetchone()
+    if not actor:
+        return False
+    ts = ahora()
+    conn.execute(
+        "INSERT INTO nodo (id, tipo, nombre, ambito, vitalidad, descubierto_en, descubierto_por) "
+        "VALUES (?, 'actor', ?, 'coforge-santander', 'activo', ?, ?)",
+        (actor_id, f"{actor[0]}:{actor[1]}" if actor[1] else actor[0], ts, FUENTE),
+    )
+    conn.execute(
+        "INSERT INTO evento (cuando, actor, accion, nodo_id, detalle) VALUES (?,?,?,?,?)",
+        (ts, actor_escritor, "alta_nodo_actor", actor_id, f"nodo actor creado para afirmaciones"),
+    )
+    return True
+
+
 def cmd_nombre(args):
     verificar_repo_limpio()
     conn, db_path = conectar(args.db)
@@ -102,14 +122,16 @@ def cmd_nombre(args):
     print(f"[backup] {b}")
 
     ts = ahora()
+    actor_escritor = args.actor if conn.execute(
+        "SELECT clase FROM actor WHERE id=?", (args.actor,)
+    ).fetchone()[0] == "humano" else "IA:05-arquitecto-sypnose:claude-opus-5"
+
     conn.execute("BEGIN IMMEDIATE")
     try:
+        asegurar_nodo_actor(conn, args.actor, actor_escritor)
+
         if ya:
             conn.execute("UPDATE afirmacion SET vigente=0 WHERE id=?", (ya[0],))
-
-        actor_escritor = args.actor if conn.execute(
-            "SELECT clase FROM actor WHERE id=?", (args.actor,)
-        ).fetchone()[0] == "humano" else "IA:05-arquitecto-sypnose:claude-opus-5"
 
         conn.execute(
             "INSERT INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando) VALUES (?,?,?,?,?,?,?)",
