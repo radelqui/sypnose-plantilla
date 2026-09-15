@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import re
 import subprocess
 import urllib.parse
@@ -20,22 +21,29 @@ FORMATO_ENTREGA = (
 )
 
 
+PRIORIDAD = {"devuelta": 0, "trabajando": 1, "pendiente": 2}
+
+
 def buscar_plan(cfg: dict):
+    """Tareas trabajables: devuelta > trabajando > pendiente. espera_firma (la firma Carlos), hecha y bloqueada no se trabajan."""
     listado = comun.leer_registro(cfg, "/planes?limite=500")["planes"]
     fijado = cfg.get("plan_id")
     filtrados = [p for p in listado if p.get("tareas") and (p["id"] == fijado if fijado else p["id"].startswith(cfg.get("prefijo_planes", "")))]
     prefijo_agente = f"IA:{cfg['carpeta']}:"
-    candidatos = []
+    candidatos, sin_trabajo = [], []
     for grupo in ([p for p in filtrados if p["estado"] == "abierto"], [p for p in filtrados if p["estado"] != "abierto"]):
         for p in grupo:
             d = comun.leer_registro(cfg, "/plan/" + urllib.parse.quote(p["id"], safe=""))
-            mias = [t for t in d["tareas"] if str(t.get("agente") or "").startswith(prefijo_agente) and t["progreso"] != "hecha"]
+            propias = [t for t in d["tareas"] if str(t.get("agente") or "").startswith(prefijo_agente)]
+            mias = sorted((t for t in propias if t["progreso"] in PRIORIDAD), key=lambda t: (PRIORIDAD[t["progreso"]], t["id"]))
             if mias:
                 candidatos.append((d, mias))
+            elif propias:
+                sin_trabajo.append((d["plan"]["id"], [(t["id"], t["progreso"]) for t in propias]))
         validos = [c for c in candidatos if c[0]["plan"]["estado"] == "abierto" and str(c[0]["plan"].get("dueno") or "").startswith("H:")]
         if validos:
-            return validos[0], candidatos
-    return None, candidatos
+            return validos[0], candidatos, sin_trabajo
+    return None, candidatos, sin_trabajo
 
 
 def resolver_permitidos(plan: dict, cfg: dict) -> tuple[list[str], str]:
@@ -75,6 +83,42 @@ def leccion(cfg: dict, linea: str | None) -> str:
     except Exception as e:
         return f"KB NO RESPONDE ({cfg['kb_url']}): {type(e).__name__}: {e}"
     return f"{lec['key']}: {str(lec.get('value'))[:1500]}" if lec else f"ninguna todavía (clave leccion-linea-{linea}-*)."
+
+
+def devolucion(detalle: dict, tarea: dict) -> str:
+    if tarea.get("progreso") != "devuelta":
+        return ""
+    patron = re.compile(rf"\btarea {tarea['id']}\b")
+    for e in detalle.get("eventos", []):
+        if ("bloqueo:verificador" in e["accion"] or "devuelta" in e["accion"]) and patron.search(e.get("detalle") or ""):
+            return f"Motivo de la devolución ({e['actor']}, {e['cuando']}): {(e.get('detalle') or '')[:600]}"
+    return "Motivo de la devolución: no aparece en los últimos eventos del plan."
+
+
+def _gh(worktree: str, *args: str):
+    p = subprocess.run(["gh", *args], cwd=worktree, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       timeout=20, creationflags=cerco.SIN_VENTANA)
+    if p.returncode != 0:
+        raise RuntimeError((p.stderr or p.stdout).strip()[:200])
+    return json.loads(p.stdout or "[]")
+
+
+def github(worktree: str) -> str:
+    """GitHub por gh (CLI autenticado en el PC): CI y PR de la rama del worktree y último CI de main."""
+    try:
+        rama = _git(worktree, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        campos = "status,conclusion,workflowName,createdAt,url"
+        run_rama = _gh(worktree, "run", "list", "--branch", rama, "--limit", "1", "--json", campos)
+        run_main = _gh(worktree, "run", "list", "--branch", "main", "--limit", "1", "--json", campos)
+        prs = _gh(worktree, "pr", "list", "--head", rama, "--state", "all", "--limit", "1", "--json", "number,state,url")
+    except (OSError, subprocess.TimeoutExpired, RuntimeError, json.JSONDecodeError) as e:
+        return f"gh no disponible ({type(e).__name__}: {e})"
+
+    def resumen_run(runs: list) -> str:
+        return f"{runs[0]['workflowName']} {runs[0]['conclusion'] or runs[0]['status']} {runs[0]['createdAt']} {runs[0]['url']}" if runs else "sin runs"
+
+    pr = f"PR #{prs[0]['number']} {prs[0]['state']} {prs[0]['url']}" if prs else "sin PR"
+    return f"rama {rama}: CI {resumen_run(run_rama)} · {pr} · main: CI {resumen_run(run_main)}"
 
 
 def envio_inicial(cfg: dict) -> str:
@@ -127,7 +171,7 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
     nota_cola = envio_inicial(cfg)
     try:
         comun.salud(cfg)
-        encontrado, candidatos = buscar_plan(cfg)
+        encontrado, candidatos, sin_trabajo = buscar_plan(cfg)
     except comun.RegistroCaido as e:
         return abortar(estado, cfg, f"REGISTRO SYPNOSE CAÍDO: no se puede verificar el plan ({e})",
                        comun.plan_de(previo or comun.ultimo_estado(), cfg), nota_cola)
@@ -137,10 +181,16 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
             motivo = (f"{p['id']} está '{p['estado']}' con dueño {p.get('dueno') or 'ninguno'}: solo se trabaja un plan abierto por un humano (H:). "
                       f"Carlos debe abrirlo como dueño en la consola SYPNOSE ({cfg['registro_url']}).")
             return abortar(estado, cfg, motivo, p["id"], nota_cola)
+        if sin_trabajo:
+            plan_id, tareas = sin_trabajo[0]
+            estados = ", ".join(f"tarea {i} {pr}" for i, pr in tareas)
+            return abortar(estado, cfg, f"{plan_id} no tiene trabajo abierto para IA:{cfg['carpeta']}:* ({estados}): espera_firma la firma Carlos "
+                                        "y bloqueada espera a otra tarea.", plan_id, nota_cola)
         return abortar(estado, cfg, f"ningún plan {cfg.get('prefijo_planes', '')}* tiene tareas para IA:{cfg['carpeta']}:*.", cfg.get("plan_id"), nota_cola)
 
     detalle, mias = encontrado
     p, tarea = detalle["plan"], mias[0]
+    motivo_devolucion = devolucion(detalle, tarea)
     req = next((r for r in detalle["requisitos"] if r["ref"] == tarea["req_ref"]), None)
     if not req:
         return abortar(estado, cfg, f"la tarea {tarea['id']} apunta al requisito {tarea['req_ref']}, que no existe en {p['id']}.", p["id"], nota_cola)
@@ -181,12 +231,14 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
         f"Línea de la oferta (literal): \"{p['para']}\"",
         f"Qué: {p['que']}",
         f"Tarea {tarea['id']} · requisito {req['ref']} · progreso {estado['tarea']['progreso']}",
+        motivo_devolucion,
         f"Requisito {req['ref']} (EARS literal): {req['ears']}",
         f"Comprobación: {req['comprobacion']}",
         f"Worktree local: {cfg['worktree']}",
         f"Archivos permitidos ({fuente_permitidos}): {', '.join(permitidos)}",
         f"Presupuesto: {presupuesto}",
         f"Grafo del repo: {grafo(cfg['worktree'])}",
+        f"GitHub (gh): {github(cfg['worktree'])}",
         f"Última lección de la línea: {leccion(cfg, estado['linea'])}",
         f"Cola del caparazón: {nota_cola}" if nota_cola else "",
         "Reglas de máquina: escrituras fuera del cerco se bloquean (bloqueo:cerco); cada herramienta deja evento con tokens y coste en la cola "
