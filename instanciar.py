@@ -1,20 +1,24 @@
-"""TRASPASO-4 D2 v2: instanciar el molde para un nuevo proyecto.
+"""TRASPASO-4 D2 v3: instanciar el molde para un nuevo proyecto.
 
 El molde (plantilla-microservicio-ia) tiene 15 raíces linea_oferta y NADA más (sin requisitos).
 Instanciar crea: colección, nodo solución (sin cubre: queda "vacío"),
 15 planes PLAN-<SIGLA>-T01..15 en propuesto con R0 bootstrap + tarea.
 
 Roles: se leen de oferta.yaml sección roles_por_linea. Si una línea no tiene rol → ABORTA.
+Oferta: ruta fija (oferta-coforge.txt junto a este script). No existe --oferta.
+Git status limpio + oferta_hash + oferta_commit verificados antes de escribir.
 R0 lifecycle: 07-verificador pone tarea en espera_firma cuando comprobación R0 dé ≥1;
               la tarea pasa a hecha SOLO con firma de Carlos (D4: solo humanos → declarado).
 
-    python3 instanciar.py --db ~/sypnose-f1/registry.db --slug bedrock-agent --sigla BA --oferta oferta-coforge.txt
-    python3 instanciar.py --db ~/sypnose-f1/registry.db --slug bedrock-agent --sigla BA --oferta oferta-coforge.txt --dry-run
+    python3 instanciar.py --db ~/sypnose-f1/registry.db --slug bedrock-agent --sigla BA
+    python3 instanciar.py --db ~/sypnose-f1/registry.db --slug bedrock-agent --sigla BA --dry-run
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sqlite3
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,7 +28,10 @@ import yaml
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-5"
 FUENTE = "plantilla/instanciar.py"
 COLECCION_MOLDE = "plantilla-microservicio-ia"
+NODO_PLANTILLA = "plantilla:microservicio-ia"
+OFERTA_PATH = Path(__file__).resolve().parent / "oferta-coforge.txt"
 OFERTA_YAML = Path(__file__).resolve().parent / "oferta.yaml"
+PLANTILLA_DIR = OFERTA_PATH.parent
 
 
 def cargar_roles() -> dict[str, tuple[str, str]]:
@@ -39,6 +46,59 @@ def cargar_roles() -> dict[str, tuple[str, str]]:
 
 def ahora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def hash_oferta(texto: str) -> str:
+    return hashlib.sha256(texto.encode()).hexdigest()[:16]
+
+
+def verificar_git_limpio() -> None:
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(PLANTILLA_DIR), "status", "--porcelain", "oferta-coforge.txt"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except FileNotFoundError:
+        sys.exit("[FALLO] git no encontrado; plantilla/ debe ser su propio repo git")
+    except subprocess.TimeoutExpired:
+        sys.exit("[FALLO] git status timeout")
+    if r.returncode != 0:
+        sys.exit(f"[FALLO] git -C plantilla status falló (rc={r.returncode}): {r.stderr.strip()}\n"
+                 f"¿plantilla/ tiene 'git init'?")
+    if r.stdout.strip():
+        sys.exit(f"[FALLO] oferta-coforge.txt tiene cambios sin commit: {r.stdout.strip()}\n"
+                 f"Haz 'git add + git commit' en el repo plantilla antes de ejecutar instanciar.py.")
+
+
+def obtener_commit_head() -> str:
+    r = subprocess.run(
+        ["git", "-C", str(PLANTILLA_DIR), "rev-parse", "HEAD"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if r.returncode != 0:
+        sys.exit(f"[FALLO] git rev-parse HEAD falló: {r.stderr.strip()}")
+    return r.stdout.strip()
+
+
+def verificar_oferta_canonica(conn: sqlite3.Connection, h: str) -> None:
+    reg_hash = conn.execute(
+        "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo='oferta_hash' AND vigente=1",
+        (NODO_PLANTILLA,),
+    ).fetchone()
+    if not reg_hash:
+        sys.exit("[FALLO] no hay oferta_hash registrado. Ejecuta 'raiz.py sync --registrar-hash' primero.")
+    if reg_hash[0] != h:
+        sys.exit(f"[FALLO] hash del fichero ({h}) no coincide con el canónico ({reg_hash[0]}).")
+
+    commit_actual = obtener_commit_head()
+    reg_commit = conn.execute(
+        "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo='oferta_commit' AND vigente=1",
+        (NODO_PLANTILLA,),
+    ).fetchone()
+    if not reg_commit:
+        sys.exit("[FALLO] no hay oferta_commit registrado. Ejecuta 'raiz.py sync --registrar-hash' primero.")
+    if reg_commit[0] != commit_actual:
+        sys.exit(f"[FALLO] commit HEAD ({commit_actual[:12]}) no coincide con el registrado ({reg_commit[0][:12]}).")
 
 
 def backup(conn: sqlite3.Connection, db_path: Path) -> Path:
@@ -62,19 +122,21 @@ def main():
     ap.add_argument("--db", required=True)
     ap.add_argument("--slug", required=True, help="identificador del proyecto (ej. bedrock-agent)")
     ap.add_argument("--sigla", required=True, help="sigla corta para planes (ej. BA → PLAN-BA-T01)")
-    ap.add_argument("--oferta", required=True, help="ruta a oferta-coforge.txt")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+
+    verificar_git_limpio()
 
     sys.path.insert(0, str(Path(__file__).parent))
     from parser_oferta import extraer_lineas
 
-    oferta_path = Path(args.oferta)
-    if not oferta_path.exists():
-        sys.exit(f"[FALLO] no existe {oferta_path}")
-    lineas = extraer_lineas(oferta_path.read_text(encoding="utf-8"))
+    if not OFERTA_PATH.exists():
+        sys.exit(f"[FALLO] no existe {OFERTA_PATH}")
+    texto = OFERTA_PATH.read_text(encoding="utf-8")
+    lineas = extraer_lineas(texto)
     if not lineas:
         sys.exit("[FALLO] el parser no extrajo ninguna línea")
+    h = hash_oferta(texto)
 
     roles = cargar_roles()
     sin_rol = [l["id"] for l in lineas if l["id"] not in roles]
@@ -86,6 +148,8 @@ def main():
     conn = sqlite3.connect(db_path, isolation_level=None)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 8000")
+
+    verificar_oferta_canonica(conn, h)
 
     col_id = args.slug
     sol_id = f"sol:{args.slug}"
