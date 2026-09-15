@@ -152,7 +152,7 @@ plan_por_linea:
   PLAN-CS-T14: T14   # CI/CD tools (sin yaml task, deseable)
   PLAN-CS-T15: T15   # microservices arch (sin yaml task, deseable)
 # Líneas cubiertas por la solución con evidencia. enlazar_solucion.py solo crea cubre para estas.
-cubre_por_evidencia: [T01, T02, T03, T05, T06, T07, T08, T09, T10, T12, T13]
+cubre_por_evidencia: [T01, T02, T03, T05, T06, T07, T08, T09, T10, T12, T13, T14, T15]
 roles_por_linea:
   T01: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T02: {rol: 04-agentes, modelo: claude-sonnet-5}
