@@ -493,8 +493,7 @@ def main() -> None:
                                        reg.cuenta("bloqueo:entrega_incompleta") == 2 and reg.cuenta("tarea_entregada") == 2))
 
         # Casos de 07-verificador, x3_entrega2.py (su scratchpad, 15-sep), portados tal cual: sesión nueva por caso con su comprobación.
-        def ataque_entrega(i, nombre, comprobacion_caso, pasos, pegada, rechaza, origen="x3_entrega2.py", etiqueta=None):
-            sid_caso = f"{sid}-x3e2-{i}"
+        def preparar_entrega(sid_caso, comprobacion_caso, pasos):
             with sqlite3.connect(db) as c:
                 c.execute("UPDATE requisito SET comprobacion=? WHERE plan_id='PLAN-CS-T01'", (comprobacion_caso,))
             base_caso, post_caso = {**base, "session_id": sid_caso}, {**post, "session_id": sid_caso}
@@ -514,6 +513,10 @@ def main() -> None:
             for script, entrada in preparacion:
                 subprocess.run([sys.executable, str(dir_capa / script)], input=json.dumps(entrada, ensure_ascii=False).encode("utf-8"),
                                capture_output=True, env={**os.environ, **env}, timeout=240)
+
+        def ataque_entrega(i, nombre, comprobacion_caso, pasos, pegada, rechaza, origen="x3_entrega2.py", etiqueta=None):
+            sid_caso = f"{sid}-x3e2-{i}"
+            preparar_entrega(sid_caso, comprobacion_caso, pasos)
             antes = reg.cuenta("tarea_entregada")
             caso(f"{etiqueta or f'07-E{i} Stop ({origen})'}: {nombre}", dir_capa, "stop.py",
                  {**stop, "session_id": sid_caso,
@@ -590,6 +593,55 @@ def main() -> None:
         caso("B2.2 UserPromptSubmit siguiente de esa sesión: solo la EARS, el brief no se repite", dir_capa, "prompt_submit.py",
              {**base, "session_id": sid_sin, "hook_event_name": "UserPromptSubmit", "prompt": "sigue"}, env,
              lambda rc, o, e: rc == 0 and "BRIEF CAPARAZÓN" not in o and "texto literal del registro SYPNOSE" in o)
+
+        # KB caída al entregar (examen real de 07 y decisión del lead, 15-sep): el registro recibe la entrega, su evidencia y el aviso;
+        # solo la lección y su evento leccion_guardada se quedan en la cola hasta que la KB responde.
+        puntos = "...............                                                          [100%]"
+        sid_kb = f"{sid}-kb-caida"
+        preparar_entrega(sid_kb, comprobacion, [(comprobacion, f"{puntos}\n15 passed in 1.04s\n")])
+        antes_kb = {a: reg.cuenta(a) for a in ("tarea_entregada", "leccion_guardada", "aviso_verificador", "bloqueo:kb_caida", "bloqueo:registro_caido")}
+        caso("B6.19 Stop: ENTREGA válida con la KB caída → tarea_entregada, evidencia y aviso llegan al registro; la lección se queda en la cola",
+             dir_capa, "stop.py", {**stop, "session_id": sid_kb,
+                                   "last_assistant_message": f"ENTREGA\nComprobación: {comprobacion}\nSalida: 15 passed in 1.04s\nLECCIÓN: la KB caída no retiene el registro"},
+             {**env, "SYPNOSE_KB_URL": "http://127.0.0.1:9"},
+             lambda rc, o, e: rc == 0 and "ENTREGA registrada en SYPNOSE" in o and "KB SIN RESPUESTA" in o,
+             despues=lambda: comprobar(
+                 f"tarea_entregada {antes_kb['tarea_entregada']}→{reg.cuenta('tarea_entregada')} · aviso_verificador "
+                 f"{antes_kb['aviso_verificador']}→{reg.cuenta('aviso_verificador')} · leccion_guardada {antes_kb['leccion_guardada']}→"
+                 f"{reg.cuenta('leccion_guardada')} · bloqueo:kb_caida {antes_kb['bloqueo:kb_caida']}→{reg.cuenta('bloqueo:kb_caida')} · "
+                 f"bloqueo:registro_caido {antes_kb['bloqueo:registro_caido']}→{reg.cuenta('bloqueo:registro_caido')} · operaciones en cola={en_cola(sid_kb)}",
+                 reg.cuenta("tarea_entregada") == antes_kb["tarea_entregada"] + 1 and reg.cuenta("aviso_verificador") == antes_kb["aviso_verificador"] + 1
+                 and reg.cuenta("leccion_guardada") == antes_kb["leccion_guardada"] and reg.cuenta("bloqueo:kb_caida") == antes_kb["bloqueo:kb_caida"]
+                 and reg.cuenta("bloqueo:registro_caido") == antes_kb["bloqueo:registro_caido"] and en_cola(sid_kb) == 2))
+        caso("B6.20 flush con la KB de vuelta: la lección se guarda, leccion_guardada llega y queda bloqueo:kb_caida con sus operaciones retenidas",
+             dir_capa, "flush.py", {"session_id": sid_kb, "cwd": wt}, env, lambda rc, o, e: rc == 0, ("--si-toca", "0"),
+             despues=lambda: comprobar(
+                 f"leccion_guardada {antes_kb['leccion_guardada']}→{reg.cuenta('leccion_guardada')} · bloqueo:kb_caida "
+                 f"{antes_kb['bloqueo:kb_caida']}→{reg.cuenta('bloqueo:kb_caida')} (evidencias {reg.evidencias('bloqueo:kb_caida')}) · "
+                 f"detalle: {[d[:95] for d in detalles('bloqueo:kb_caida')][-1:]} · operaciones en cola={en_cola(sid_kb)}",
+                 reg.cuenta("leccion_guardada") == antes_kb["leccion_guardada"] + 1 and reg.cuenta("bloqueo:kb_caida") == antes_kb["bloqueo:kb_caida"] + 1
+                 and reg.evidencias("bloqueo:kb_caida") >= 1 and any("2 operaciones retenidas" in d for d in detalles("bloqueo:kb_caida"))
+                 and en_cola(sid_kb) == 0))
+
+        # Evidencia de la entrega con la salida real (examen real de 07, 15-sep): la línea de resumen si la hay y la salida completa.
+        ultima_evidencia = lambda: (reg.filas("SELECT dice FROM evidencia WHERE fuente=? ORDER BY rowid DESC LIMIT 1",
+                                              (f"entrega:{cfg['carpeta']}",)) or [[""]])[0][0]
+        sid_ev = f"{sid}-evidencia"
+        preparar_entrega(sid_ev, comprobacion, [(comprobacion, f"{puntos}\n15 passed in 1.04s\n")])
+        caso("B6.21 Stop: ENTREGA que pega la línea de puntos → la evidencia entrega:* lleva '15 passed in 1.04s' y la salida completa",
+             dir_capa, "stop.py", {**stop, "session_id": sid_ev,
+                                   "last_assistant_message": f"ENTREGA\nComprobación: {comprobacion}\nSalida: {puntos}\nLECCIÓN: prueba"}, env,
+             lambda rc, o, e: rc == 0,
+             despues=lambda: comprobar(f"evidencia: {ultima_evidencia()[:170]!r}",
+                                       "→ 15 passed in 1.04s" in ultima_evidencia() and "Salida completa:" in ultima_evidencia() and puntos in ultima_evidencia()))
+        sid_qq = f"{sid}-evidencia-qq"
+        preparar_entrega(sid_qq, comprobacion, [(comprobacion, f"{puntos}\n")])
+        caso("B6.22 Stop: ENTREGA cuya salida no trae resumen (pytest -qq) → la evidencia lo dice y guarda la salida completa",
+             dir_capa, "stop.py", {**stop, "session_id": sid_qq,
+                                   "last_assistant_message": f"ENTREGA\nComprobación: {comprobacion}\nSalida: {puntos}\nLECCIÓN: prueba"}, env,
+             lambda rc, o, e: rc == 0,
+             despues=lambda: comprobar(f"evidencia: {ultima_evidencia()[:200]!r}",
+                                       "(la salida no trae línea de resumen)" in ultima_evidencia() and puntos in ultima_evidencia()))
 
         # Barrera de escritura en vivo (lead, tras el incidente del 15-sep 12:34Z): en vivo solo con SYPNOSE_MODO=real, el marcador INSTALADO
         # junto a los módulos instalados y la sesión en la carpeta o en su worktree. ssh.bin apunta a un ejecutable que no existe: si la
