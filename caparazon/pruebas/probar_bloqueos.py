@@ -599,7 +599,7 @@ def main() -> None:
         puntos = "...............                                                          [100%]"
         sid_kb = f"{sid}-kb-caida"
         preparar_entrega(sid_kb, comprobacion, [(comprobacion, f"{puntos}\n15 passed in 1.04s\n")])
-        antes_kb = {a: reg.cuenta(a) for a in ("tarea_entregada", "leccion_guardada", "aviso_verificador")}
+        antes_kb = {a: reg.cuenta(a) for a in ("tarea_entregada", "leccion_guardada", "aviso_verificador", "bloqueo:kb_caida", "bloqueo:registro_caido")}
         caso("B6.19 Stop: ENTREGA válida con la KB caída → tarea_entregada, evidencia y aviso llegan al registro; la lección se queda en la cola",
              dir_capa, "stop.py", {**stop, "session_id": sid_kb,
                                    "last_assistant_message": f"ENTREGA\nComprobación: {comprobacion}\nSalida: 15 passed in 1.04s\nLECCIÓN: la KB caída no retiene el registro"},
@@ -608,13 +608,20 @@ def main() -> None:
              despues=lambda: comprobar(
                  f"tarea_entregada {antes_kb['tarea_entregada']}→{reg.cuenta('tarea_entregada')} · aviso_verificador "
                  f"{antes_kb['aviso_verificador']}→{reg.cuenta('aviso_verificador')} · leccion_guardada {antes_kb['leccion_guardada']}→"
-                 f"{reg.cuenta('leccion_guardada')} · operaciones en cola={en_cola(sid_kb)}",
+                 f"{reg.cuenta('leccion_guardada')} · bloqueo:kb_caida {antes_kb['bloqueo:kb_caida']}→{reg.cuenta('bloqueo:kb_caida')} · "
+                 f"bloqueo:registro_caido {antes_kb['bloqueo:registro_caido']}→{reg.cuenta('bloqueo:registro_caido')} · operaciones en cola={en_cola(sid_kb)}",
                  reg.cuenta("tarea_entregada") == antes_kb["tarea_entregada"] + 1 and reg.cuenta("aviso_verificador") == antes_kb["aviso_verificador"] + 1
-                 and reg.cuenta("leccion_guardada") == antes_kb["leccion_guardada"] and en_cola(sid_kb) == 2))
-        caso("B6.20 flush con la KB de vuelta: la lección se guarda y leccion_guardada llega al registro", dir_capa, "flush.py",
-             {"session_id": sid_kb, "cwd": wt}, env, lambda rc, o, e: rc == 0, ("--si-toca", "0"),
-             despues=lambda: comprobar(f"leccion_guardada {antes_kb['leccion_guardada']}→{reg.cuenta('leccion_guardada')} · operaciones en cola={en_cola(sid_kb)}",
-                                       reg.cuenta("leccion_guardada") == antes_kb["leccion_guardada"] + 1 and en_cola(sid_kb) == 0))
+                 and reg.cuenta("leccion_guardada") == antes_kb["leccion_guardada"] and reg.cuenta("bloqueo:kb_caida") == antes_kb["bloqueo:kb_caida"]
+                 and reg.cuenta("bloqueo:registro_caido") == antes_kb["bloqueo:registro_caido"] and en_cola(sid_kb) == 2))
+        caso("B6.20 flush con la KB de vuelta: la lección se guarda, leccion_guardada llega y queda bloqueo:kb_caida con sus operaciones retenidas",
+             dir_capa, "flush.py", {"session_id": sid_kb, "cwd": wt}, env, lambda rc, o, e: rc == 0, ("--si-toca", "0"),
+             despues=lambda: comprobar(
+                 f"leccion_guardada {antes_kb['leccion_guardada']}→{reg.cuenta('leccion_guardada')} · bloqueo:kb_caida "
+                 f"{antes_kb['bloqueo:kb_caida']}→{reg.cuenta('bloqueo:kb_caida')} (evidencias {reg.evidencias('bloqueo:kb_caida')}) · "
+                 f"detalle: {[d[:95] for d in detalles('bloqueo:kb_caida')][-1:]} · operaciones en cola={en_cola(sid_kb)}",
+                 reg.cuenta("leccion_guardada") == antes_kb["leccion_guardada"] + 1 and reg.cuenta("bloqueo:kb_caida") == antes_kb["bloqueo:kb_caida"] + 1
+                 and reg.evidencias("bloqueo:kb_caida") >= 1 and any("2 operaciones retenidas" in d for d in detalles("bloqueo:kb_caida"))
+                 and en_cola(sid_kb) == 0))
 
         # Evidencia de la entrega con la salida real (examen real de 07, 15-sep): la línea de resumen si la hay y la salida completa.
         ultima_evidencia = lambda: (reg.filas("SELECT dice FROM evidencia WHERE fuente=? ORDER BY rowid DESC LIMIT 1",
