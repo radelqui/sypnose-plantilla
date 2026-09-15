@@ -8,6 +8,8 @@ Nunca heurísticas; todo explícito y bajo barrera hash.
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -18,7 +20,7 @@ import yaml
 
 from barrera import PLANTILLA_DIR, verificar_canonicos_registrados, verificar_repo_limpio
 
-ACTOR = "IA:05-arquitecto-sypnose:claude-opus-5"
+ACTOR = "IA:05-arquitecto-sypnose:claude-opus-4-6"
 FUENTE = "plantilla/enlazar_solucion.py"
 COLECCION = "plantilla-microservicio-ia"
 NODO_PLANTILLA = "plantilla:microservicio-ia"
@@ -146,6 +148,110 @@ def cargar_oferta_yaml():
     return plan_por_linea, cubre_map
 
 
+# ── Certeza calculation from sources ──
+
+RE_FILE_SHA = re.compile(r"^(.+)@([0-9a-f]{6,40})$")
+RE_SECTION = re.compile(r"^(.+)#(.+)@([0-9a-f]{6,40})$")
+RE_GH_RUN = re.compile(r"^gh:run:(\d+)$")
+GH_REPO = "radelqui/rag-banking-agent"
+
+
+def _git_cat_file_exists(sha: str, path: str) -> bool:
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(REPO_RAG), "cat-file", "-e", f"{sha}:{path}"],
+            capture_output=True, timeout=10,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _git_heading_exists(sha: str, path: str, section: str) -> bool:
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(REPO_RAG), "show", f"{sha}:{path}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0:
+            return False
+        pattern = re.compile(r"^#+\s*" + re.escape(section), re.IGNORECASE | re.MULTILINE)
+        return bool(pattern.search(r.stdout))
+    except Exception:
+        return False
+
+
+def _gh_run_success(run_id: str) -> bool:
+    try:
+        r = subprocess.run(
+            ["gh", "api", f"repos/{GH_REPO}/actions/runs/{run_id}", "--jq", ".conclusion"],
+            capture_output=True, text=True, timeout=30,
+        )
+        return r.returncode == 0 and r.stdout.strip() == "success"
+    except Exception:
+        return False
+
+
+def validar_fuente(fuente: str) -> tuple[bool, str]:
+    """Returns (valid, reason)."""
+    m = RE_SECTION.match(fuente)
+    if m:
+        path, section, sha = m.groups()
+        if not _git_cat_file_exists(sha, path):
+            return False, f"file {path} not found at {sha}"
+        if not _git_heading_exists(sha, path, section):
+            return False, f"heading #{section} not found in {path}@{sha}"
+        return True, "ok"
+
+    m = RE_FILE_SHA.match(fuente)
+    if m:
+        path, sha = m.groups()
+        if _git_cat_file_exists(sha, path):
+            return True, "ok"
+        return False, f"file {path} not found at {sha}"
+
+    m = RE_GH_RUN.match(fuente)
+    if m:
+        run_id = m.group(1)
+        if _gh_run_success(run_id):
+            return True, "ok"
+        return False, f"gh run {run_id} not success"
+
+    if fuente.startswith("plan:"):
+        return True, "ok (plan reference)"
+
+    return True, "ok (unrecognized format, accepted)"
+
+
+def calcular_certeza(conn, plan_id: str) -> tuple[str, list[str]]:
+    """Calculate certeza from evidence sources. Returns (certeza, reasons)."""
+    filas = conn.execute(
+        "SELECT fuente, dice FROM evidencia WHERE plan_id=? "
+        "AND fuente NOT LIKE 'bloqueo:%' AND fuente NOT LIKE 'INVALIDA:%'",
+        (plan_id,),
+    ).fetchall()
+    if not filas:
+        return "propuesto", ["0 filas de evidencia real"]
+
+    razones = []
+    alguna_falla = False
+    for fuente, dice in filas:
+        if "PARCIAL" in dice.upper():
+            alguna_falla = True
+            razones.append(f"dice contiene PARCIAL: {fuente}")
+        valida, motivo = validar_fuente(fuente)
+        if not valida:
+            alguna_falla = True
+            razones.append(f"fuente inválida: {fuente} ({motivo})")
+
+    if alguna_falla:
+        return "inferido", razones
+    return "observado", ["todas las fuentes válidas"]
+
+
+CERTEZA_ORDEN = {"propuesto": 0, "inferido": 1, "observado": 2}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
@@ -168,25 +274,42 @@ def main() -> None:
 
     verificar_canonicos_registrados(conn)
 
-    # Regla lead + 07: cada línea en cubre_por_evidencia debe tener ≥1 evidencia
-    # real (no bloqueo:*) en su plan
+    # Certeza calculada desde fuentes (lead decision X1v5)
     linea_a_plan = {v: k for k, v in plan_por_linea.items()}
-    sin_evidencia = []
+    certeza_calculada = {}
+    print("[certeza] calculando desde fuentes de evidencia...")
     for lid in sorted(cubre_set):
         plan_id = linea_a_plan.get(lid)
         if not plan_id:
-            sin_evidencia.append(f"{lid}: sin plan en plan_por_linea")
-            continue
-        n = conn.execute(
-            "SELECT COUNT(*) FROM evidencia WHERE plan_id=? AND fuente NOT LIKE 'bloqueo:%'",
-            (plan_id,),
-        ).fetchone()[0]
-        if n == 0:
-            sin_evidencia.append(f"{lid} ({plan_id}): 0 filas de evidencia real (excl. bloqueo)")
-    if sin_evidencia:
-        for s in sin_evidencia:
-            print(f"  [FALLO] {s}")
-        sys.exit(f"[FALLO] {len(sin_evidencia)} líneas en cubre_por_evidencia sin evidencia registrada")
+            sys.exit(f"[FALLO] {lid}: sin plan en plan_por_linea")
+        calc, razones = calcular_certeza(conn, plan_id)
+        certeza_calculada[lid] = calc
+        yaml_decl = cubre_map[lid]
+        marca = "OK" if yaml_decl == calc else "!!"
+        print(f"  {lid} ({plan_id}): calculado={calc}, yaml={yaml_decl} [{marca}]")
+        for r in razones:
+            if r != "todas las fuentes válidas":
+                print(f"      → {r}")
+
+    # Regla lead: yaml declara más que calculado → abortar
+    errores = []
+    for lid in sorted(cubre_set):
+        yaml_decl = cubre_map[lid]
+        calc = certeza_calculada[lid]
+        if CERTEZA_ORDEN.get(yaml_decl, 0) > CERTEZA_ORDEN.get(calc, 0):
+            errores.append(f"{lid}: yaml={yaml_decl} > calculado={calc}")
+    if errores:
+        for e in errores:
+            print(f"  [FALLO] {e}")
+        sys.exit(f"[FALLO] {len(errores)} líneas con yaml declarando más certeza que la calculada")
+
+    # Regla lead: yaml declara menos que calculado → usar calculado + evento
+    for lid in sorted(cubre_set):
+        yaml_decl = cubre_map[lid]
+        calc = certeza_calculada[lid]
+        if CERTEZA_ORDEN.get(yaml_decl, 0) < CERTEZA_ORDEN.get(calc, 0):
+            print(f"  [INFO] {lid}: yaml={yaml_decl} < calculado={calc}, se usará {calc}")
+            cubre_map[lid] = calc
 
     lineas = conn.execute(
         "SELECT id FROM nodo WHERE tipo='linea_oferta' ORDER BY id"

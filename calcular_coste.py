@@ -29,7 +29,7 @@ import yaml
 
 from barrera import PRECIOS_PATH, verificar_repo_limpio
 
-ACTOR = "IA:05-arquitecto-sypnose:claude-opus-5"
+ACTOR = "IA:05-arquitecto-sypnose:claude-opus-4-6"
 
 
 def ahora() -> str:

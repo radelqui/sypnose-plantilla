@@ -124,7 +124,7 @@ def cmd_nombre(args):
     ts = ahora()
     actor_escritor = args.actor if conn.execute(
         "SELECT clase FROM actor WHERE id=?", (args.actor,)
-    ).fetchone()[0] == "humano" else "IA:05-arquitecto-sypnose:claude-opus-5"
+    ).fetchone()[0] == "humano" else "IA:05-arquitecto-sypnose:claude-opus-4-6"
 
     conn.execute("BEGIN IMMEDIATE")
     try:
