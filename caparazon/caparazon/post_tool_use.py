@@ -1,5 +1,6 @@
-"""PostToolUse (B4): evento por herramienta (ruta, hora, tokens y coste del turno) a la cola local + auditoría git del cerco.
-El envío al registro lo hacen flush.py (async, cada 60 s) y el Stop. Si el último envío falló, lo avisa en pantalla."""
+"""PostToolUse y PostToolUseFailure (B4): evento por herramienta (ruta, hora, tokens y coste del turno) a la cola local + auditoría git
+del cerco. Una ejecución fallida (exit code distinto de 0) también queda en la sesión, para que el Stop no valide contra una salida verde
+anterior. El envío al registro lo hacen flush.py (async, cada 60 s) y el Stop. Si el último envío falló, lo avisa en pantalla."""
 from __future__ import annotations
 
 import json
@@ -38,7 +39,13 @@ def main() -> None:
     modelo_nuevo = None
     if previo.get("modelo") in (None, "desconocido"):
         modelo_nuevo = uso["modelo"] or comun.modelo_en_transcript(entrada.get("transcript_path"))
-    salida, interrumpido = salida_de(entrada.get("tool_response"))
+    fallida = entrada.get("hook_event_name") == "PostToolUseFailure"
+    if fallida:
+        salida, interrumpido = str(entrada.get("error") or ""), bool(entrada.get("is_interrupt"))
+        codigo = re.match(r"\s*Exit code (\d+)", salida)
+        exit_code = int(codigo.group(1)) if codigo else 1
+    else:
+        (salida, interrumpido), exit_code = salida_de(entrada.get("tool_response")), 0
     comando = str(datos.get("command", ""))
     actuales = None
     if not previo.get("abortado") and herramienta in ESCRITURAS + ("Bash", "PowerShell"):
@@ -50,13 +57,13 @@ def main() -> None:
             e.update(modelo=modelo_nuevo, modelo_fuente="transcript", actor=comun.actor_de(cfg, modelo_nuevo))
         if herramienta in ("Bash", "PowerShell"):
             e.setdefault("comandos", []).append({"cuando": cuando, "herramienta": herramienta, "comando": comando,
-                                                 "salida": salida[-MAX_SALIDA:], "interrumpido": interrumpido})
+                                                 "salida": salida[-MAX_SALIDA:], "interrumpido": interrumpido, "exit_code": exit_code})
             e["comandos"] = e["comandos"][-60:]
-            if re.search(r"\bgit\b.*\bcommit\b", comando):
+            if not fallida and re.search(r"\bgit\b.*\bcommit\b", comando):
                 e.setdefault("escrituras", []).append({"cuando": cuando, "herramienta": herramienta, "ruta": "git commit"})
-        if herramienta in ESCRITURAS:
+        if herramienta in ESCRITURAS and not fallida:
             e.setdefault("escrituras", []).append({"cuando": cuando, "herramienta": herramienta, "ruta": ruta_de(datos)})
-        if herramienta.endswith("send_message") and "ENTREGA" in json.dumps(datos, ensure_ascii=False):
+        if not fallida and herramienta.endswith("send_message") and "ENTREGA" in json.dumps(datos, ensure_ascii=False):
             e["aviso_07"] = {"cuando": cuando, "herramienta": herramienta}
         if actuales is not None:
             for rel in sorted(actuales - set(e.get("sucios_inicio", []))):
@@ -81,7 +88,8 @@ def main() -> None:
     if modelo_nuevo:
         ops += [{"op": "actor", "id": estado["actor"], "rol": cfg["carpeta"], "modelo": modelo_nuevo},
                 comun.op_evento(estado["actor"], "modelo_observado", f"modelo real {modelo_nuevo} leído del transcript", plan_id)]
-    ops.append(comun.op_evento(estado["actor"], f"herramienta:{herramienta}", detalle, plan_id, cuando))
+    accion = f"herramienta_fallida:{herramienta}" if fallida else f"herramienta:{herramienta}"
+    ops.append(comun.op_evento(estado["actor"], accion, detalle + (f" · exit_code={exit_code}" if fallida else ""), plan_id, cuando))
     if nuevos_fuera:
         ops += comun.ops_bloqueo(estado["actor"], "cerco", plan_id,
                                  f"auditoría git tras {herramienta}: cambios fuera de archivos_permitidos {nuevos_fuera}")
