@@ -8,6 +8,7 @@ import re
 
 import cerco
 import comun
+from stop import ejecutable, suelto
 
 MAX_SALIDA = 20000
 ESCRITURAS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
@@ -56,8 +57,11 @@ def main() -> None:
         if modelo_nuevo:
             e.update(modelo=modelo_nuevo, modelo_fuente="transcript", actor=comun.actor_de(cfg, modelo_nuevo))
         if herramienta in ("Bash", "PowerShell"):
-            e.setdefault("comandos", []).append({"cuando": cuando, "herramienta": herramienta, "comando": comando,
-                                                 "salida": salida[-MAX_SALIDA:], "interrumpido": interrumpido, "exit_code": exit_code})
+            requisito = (e.get("requisito") or {}).get("comprobacion") or ""
+            es_comprobacion = bool(requisito) and suelto(ejecutable(requisito)) in suelto(comando)
+            e.setdefault("comandos", []).append({"cuando": cuando, "herramienta": herramienta, "comando": comando, "cwd": entrada.get("cwd"),
+                                                 "salida": salida if es_comprobacion else salida[-MAX_SALIDA:],
+                                                 "interrumpido": interrumpido, "exit_code": exit_code})
             e["comandos"] = e["comandos"][-60:]
             if not fallida and re.search(r"\bgit\b.*\bcommit\b", comando):
                 e.setdefault("escrituras", []).append({"cuando": cuando, "herramienta": herramienta, "ruta": "git commit"})
