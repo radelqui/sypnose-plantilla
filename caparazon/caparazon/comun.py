@@ -477,7 +477,8 @@ def _enviar_aislando_rechazos(cfg: dict, sid: str, lotes: list[list[dict]]) -> i
 
 
 def vaciar(cfg: dict, sid: str, motivo: str, esperar: float = 0.0) -> dict:
-    """Envía la cola de una sesión: primero la KB, después un lote atómico e idempotente al registro. Si falla, la cola se queda."""
+    """Envía la cola de una sesión: primero un lote atómico e idempotente al registro y después la KB. Si el registro falla, la cola
+    entera se queda; si solo falla la KB, se quedan sus lecciones con su evento leccion_guardada y el registro recibe todo lo demás."""
     candado = COLA_DIR / (nombre_seguro(sid) + ".enviando")
     COLA_DIR.mkdir(parents=True, exist_ok=True)
     fd = _cerrojo_fichero(candado, esperar, 180)
@@ -494,7 +495,8 @@ def vaciar(cfg: dict, sid: str, motivo: str, esperar: float = 0.0) -> dict:
         intento = ahora()
         st = _actualizar_estado_cola(sid, lambda s: s.update(ultimo_intento=intento))
         fallo = st.get("fallo")
-        registro = [o for o in ops if o["op"] != "kb_guardar"]
+        claves_kb = {o["clave"] for o in ops if o["op"] == "kb_guardar"}
+        registro = [o for o in ops if o["op"] != "kb_guardar" and o.get("tras_kb") not in claves_kb]
         caida = []
         if fallo:
             caida = ops_bloqueo(fallo["actor"], "registro_caido", fallo.get("plan_id"),
@@ -507,14 +509,12 @@ def vaciar(cfg: dict, sid: str, motivo: str, esperar: float = 0.0) -> dict:
             return {"estado": "prueba", "sesion": sid, "motivo": falta, "destinos": vivos, "pendientes": len(ops), "cola": str(ruta_cola(sid))}
         try:
             salud(cfg)
-            for o in ops:
-                if o["op"] == "kb_guardar":
-                    kb_guardar(cfg, o)
             try:
                 escribir(cfg, registro + caida)
                 rechazados = 0
             except RegistroRechazo:
-                rechazados = _enviar_aislando_rechazos(cfg, sid, [[o for o in lote if o["op"] != "kb_guardar"] for lote in lotes] + [caida])
+                rechazados = _enviar_aislando_rechazos(
+                    cfg, sid, [[o for o in lote if o["op"] != "kb_guardar" and o.get("tras_kb") not in claves_kb] for lote in lotes] + [caida])
         except RegistroCaido as e:
             primer_evento = next((o for o in ops if o["op"] == "evento"), {})
 
@@ -527,20 +527,38 @@ def vaciar(cfg: dict, sid: str, motivo: str, esperar: float = 0.0) -> dict:
 
             _actualizar_estado_cola(sid, anotar_fallo)
             return {"estado": "fallo", "sesion": sid, "motivo": str(e), "pendientes": len(ops), "cola": str(ruta_cola(sid))}
+        # El registro ya tiene lo suyo. Ahora la KB (decisión del lead tras el examen real de 07, 15-sep): una lección que no se guarda
+        # se queda en la cola con su evento leccion_guardada (marcado tras_kb), que solo va al registro cuando la KB la ha guardado.
+        pendientes, motivo_kb = [], None
+        for o in [x for x in ops if x["op"] == "kb_guardar"]:
+            dependientes = [d for d in ops if d.get("tras_kb") == o["clave"]]
+            try:
+                kb_guardar(cfg, o)
+                if dependientes:
+                    escribir(cfg, dependientes)
+            except (RegistroCaido, RegistroRechazo) as e:
+                pendientes += [o, *dependientes]
+                motivo_kb = str(e)
         with cerrojo():
             completo = p.read_bytes() if p.exists() else b""
             resto = completo[len(datos):]
-            if resto:
+            quedan = (json.dumps({"cuando": intento, "ops": pendientes}, ensure_ascii=False) + "\n").encode("utf-8") if pendientes else b""
+            if quedan or resto:
                 tmp = p.with_name(p.name + ".tmp")
-                tmp.write_bytes(resto)
+                tmp.write_bytes(quedan + resto)
                 os.replace(tmp, p)
             else:
                 p.unlink(missing_ok=True)
             st = estado_cola(sid)
             st.update(fallo=None, ultimo_ok=ahora())
             _escribir_json(ruta_estado_cola(sid), st)
-        return {"estado": "rechazo" if rechazados else "ok", "sesion": sid, "enviadas": len(ops), "caido_registrado": bool(fallo),
-                "rechazadas": rechazados, "fichero_rechazos": str(COLA_DIR / (nombre_seguro(sid) + ".rechazadas.jsonl"))}
+        r = {"estado": "rechazo" if rechazados else "ok", "sesion": sid, "enviadas": len(ops) - len(pendientes), "caido_registrado": bool(fallo),
+             "rechazadas": rechazados, "fichero_rechazos": str(COLA_DIR / (nombre_seguro(sid) + ".rechazadas.jsonl"))}
+        if pendientes:
+            r.update(kb_pendientes=sum(1 for o in pendientes if o["op"] == "kb_guardar"), motivo_kb=motivo_kb, cola=str(ruta_cola(sid)))
+            if not rechazados:
+                r["estado"] = "kb_pendiente"
+        return r
     finally:
         os.close(fd)
         candado.unlink(missing_ok=True)
@@ -558,8 +576,13 @@ def texto_fallo_cola(cfg: dict, r: dict) -> str:
         return (f"MODO PRUEBA: {r['pendientes']} operaciones para {' y '.join(r['destinos'])} se quedan en la cola local ({r['cola']}). "
                 "El caparazón solo escribe en vivo con SYPNOSE_MODO=real, instalado con instalar_caparazon.py (marcador INSTALADO) y con la "
                 f"sesión en su carpeta o su worktree. Falta: {r['motivo']}.")
+    kb = (f" Además, {r['kb_pendientes']} lección(es) siguen en la cola local ({r.get('cola')}) porque la KB no responde: {r.get('motivo_kb')}."
+          if r.get("kb_pendientes") else "")
+    if r["estado"] == "kb_pendiente":
+        return (f"KB SIN RESPUESTA: el registro SYPNOSE ya recibió los eventos y las evidencias; {r['kb_pendientes']} lección(es) siguen en la "
+                f"cola local ({r.get('cola')}) y se reintentan cada 60 s y al terminar el turno. Motivo: {r.get('motivo_kb')}. Túnel: {comando_tunel(cfg)}")
     if r["estado"] == "rechazo":
-        return f"EL REGISTRO SYPNOSE RECHAZÓ {r['rechazadas']} lote(s) de la cola (guardados en {r['fichero_rechazos']}); el resto se envió."
+        return f"EL REGISTRO SYPNOSE RECHAZÓ {r['rechazadas']} lote(s) de la cola (guardados en {r['fichero_rechazos']}); el resto se envió.{kb}"
     if r["estado"] != "fallo":
         return ""
     return (f"REGISTRO SYPNOSE NO RESPONDE: {r.get('pendientes', '?')} operaciones siguen en la cola local ({r.get('cola')}); "
