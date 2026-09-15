@@ -1,8 +1,10 @@
 """Carga un requisito desde un spec.md al registro SYPNOSE.
 
 Lee la sección R<n> del spec, extrae EARS (blockquote) y comprobación (bash fence),
-pasa la barrera, hace backup_registro() ANTES de escribir, y registra evento.
+verifica autoría (Chat: trailer = rol en roles_por_linea), pasa la barrera,
+hace backup_registro() ANTES de escribir, y registra evento con VIEJO/NUEVO/sha/autor.
 Idempotente: si EARS y comprobación ya coinciden, 0 cambios.
+Si el requisito cambia y hay tareas en espera_firma o hecha, aborta (requiere decisión humana).
 
     python3 cargar_requisito.py --db ~/sypnose-f1/registry.db T01 R1 specs/T01/spec.md
     python3 cargar_requisito.py --db ~/sypnose-f1/registry.db T01 R1 specs/T01/spec.md --dry-run
@@ -12,9 +14,12 @@ from __future__ import annotations
 import argparse
 import re
 import sqlite3
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+import yaml
 
 from barrera import (
     PLANTILLA_DIR,
@@ -24,10 +29,41 @@ from barrera import (
 )
 
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-4-6"
+OFERTA_YAML = PLANTILLA_DIR / "oferta.yaml"
 
 
 def ahora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def cargar_yaml_mapas() -> tuple[dict, dict]:
+    datos = yaml.safe_load(OFERTA_YAML.read_text(encoding="utf-8"))
+    plan_por_linea = datos.get("plan_por_linea", {})
+    roles_por_linea = datos.get("roles_por_linea", {})
+    return plan_por_linea, roles_por_linea
+
+
+def obtener_spec_sha(spec_rel: str) -> str:
+    r = subprocess.run(
+        ["git", "-C", str(PLANTILLA_DIR), "log", "-1", "--format=%H", "--", spec_rel],
+        capture_output=True, text=True, timeout=10,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        sys.exit(f"[FALLO] no hay commit para {spec_rel} en el repo plantilla")
+    return r.stdout.strip()
+
+
+def obtener_spec_autor(spec_rel: str) -> str:
+    r = subprocess.run(
+        ["git", "-C", str(PLANTILLA_DIR), "log", "-1", "--format=%(trailers:key=Chat,valueonly)", "--", spec_rel],
+        capture_output=True, text=True, timeout=10,
+    )
+    if r.returncode != 0:
+        sys.exit(f"[FALLO] no se pudo leer trailers de {spec_rel}")
+    autor = r.stdout.strip()
+    if not autor:
+        sys.exit(f"[FALLO] último commit de {spec_rel} no tiene trailer 'Chat:'")
+    return autor
 
 
 def extraer_seccion_r(texto: str, ref: str) -> str:
@@ -91,15 +127,42 @@ def main() -> None:
     if not spec_path.exists():
         sys.exit(f"[FALLO] spec no encontrado: {spec_path}")
 
-    plan_id = f"PLAN-CS-{args.sigla}"
+    plan_por_linea, roles_por_linea = cargar_yaml_mapas()
+
+    plan_id = None
+    for pid, lid in plan_por_linea.items():
+        if lid == args.sigla:
+            plan_id = pid
+            break
+    if not plan_id:
+        sys.exit(f"[FALLO] sigla {args.sigla} no encontrada en plan_por_linea de oferta.yaml")
+
+    rol_esperado = roles_por_linea.get(args.sigla, {}).get("rol")
+    if not rol_esperado:
+        sys.exit(f"[FALLO] sigla {args.sigla} no tiene rol en roles_por_linea de oferta.yaml")
+
     ref = args.linea
+    spec_rel = args.spec
+
+    spec_sha = obtener_spec_sha(spec_rel)
+    spec_autor = obtener_spec_autor(spec_rel)
+
+    print(f"[spec] {spec_rel} (sha {spec_sha[:12]})")
+    print(f"[autor] Chat: {spec_autor}")
+    print(f"[rol esperado] {rol_esperado}")
+
+    if spec_autor != rol_esperado:
+        sys.exit(
+            f"[FALLO] autoría: último commit de {spec_rel} es Chat: {spec_autor}, "
+            f"pero roles_por_linea exige {rol_esperado} para {args.sigla}"
+        )
+    print("[autoría] OK")
 
     texto = spec_path.read_text(encoding="utf-8")
     seccion = extraer_seccion_r(texto, ref)
     ears = extraer_ears(seccion)
     comprobacion = extraer_comprobacion(seccion)
 
-    print(f"[spec] {spec_path.relative_to(PLANTILLA_DIR)}")
     print(f"[plan_id] {plan_id}")
     print(f"[ref] {ref}")
     print(f"[ears] {ears[:80]}{'...' if len(ears) > 80 else ''}")
@@ -123,12 +186,25 @@ def main() -> None:
             conn.close()
             return
 
+        tareas_firmadas = conn.execute(
+            "SELECT id, progreso FROM tarea WHERE plan_id=? AND req_ref=? AND progreso IN ('espera_firma','hecha')",
+            (plan_id, ref),
+        ).fetchall()
+        if tareas_firmadas:
+            ids = ", ".join(f"tarea {t[0]} ({t[1]})" for t in tareas_firmadas)
+            sys.exit(
+                f"[FALLO] el requisito {plan_id}/{ref} cambia pero hay tareas en estado firmable: {ids}. "
+                f"Requiere decisión humana (devolver tareas o aprobar el cambio)."
+            )
+
     if args.dry_run:
         print("[dry-run] habría escrito:")
         if existente:
-            print(f"  UPDATE requisito SET ears=..., comprobacion=... WHERE plan_id={plan_id} AND ref={ref}")
+            print(f"  UPDATE requisito WHERE plan_id={plan_id} AND ref={ref}")
+            print(f"  VIEJO ears: {ears_actual[:60]}...")
+            print(f"  NUEVO ears: {ears[:60]}...")
         else:
-            print(f"  INSERT INTO requisito (plan_id, ref, ears, comprobacion) VALUES ({plan_id}, {ref}, ...)")
+            print(f"  INSERT INTO requisito ({plan_id}, {ref}, ...)")
         conn.close()
         return
 
@@ -142,6 +218,11 @@ def main() -> None:
                 (ears, comprobacion, plan_id, ref),
             )
             accion = "requisito_actualizado"
+            detalle = (
+                f"{ref} · spec_sha: {spec_sha[:12]} · autor: {spec_autor} · "
+                f"VIEJO ears: {ears_actual!r} · VIEJO comprobacion: {comp_actual!r} · "
+                f"NUEVO ears: {ears!r} · NUEVO comprobacion: {comprobacion!r}"
+            )
             print(f"[update] {plan_id} {ref}")
         else:
             conn.execute(
@@ -149,17 +230,15 @@ def main() -> None:
                 (plan_id, ref, ears, comprobacion),
             )
             accion = "requisito_cargado"
+            detalle = (
+                f"{ref} · spec_sha: {spec_sha[:12]} · autor: {spec_autor} · "
+                f"ears: {ears!r} · comprobacion: {comprobacion!r}"
+            )
             print(f"[insert] {plan_id} {ref}")
 
         conn.execute(
             "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
-            (
-                ahora(),
-                args.actor,
-                accion,
-                plan_id,
-                f"{ref} EARS cargado de {args.spec}",
-            ),
+            (ahora(), args.actor, accion, plan_id, detalle),
         )
         conn.commit()
     except Exception:
@@ -168,7 +247,7 @@ def main() -> None:
     finally:
         conn.close()
 
-    print(f"[OK] {plan_id} {ref} cargado desde {args.spec}")
+    print(f"[OK] {plan_id} {ref} cargado desde {spec_rel} (sha {spec_sha[:12]}, autor {spec_autor})")
 
 
 if __name__ == "__main__":
