@@ -1,9 +1,11 @@
 """B9: pruebas de bloqueo del caparazón invocando cada hook con su ENTRADA EXACTA (JSON por stdin; fichero de mensaje en commit-msg).
 
     python probar_bloqueos.py --carpeta "C:\\MICD\\Coforge Santander\\02-backend-api" --modo local
-        registro sqlite temporal (registro_minimo.sql, PLAN-CS-T01 abierto) + API y KB simuladas; no toca SYPNOSE.
+        registro sqlite temporal (registro_minimo.sql, PLAN-CS-T01 abierto) + API y KB simuladas; no toca SYPNOSE: SYPNOSE_MODO=prueba
+        y ssh.bin apunta a un ejecutable que no existe, así que ni un fallo de la barrera podría escribir en el registro vivo.
     python probar_bloqueos.py --carpeta "C:\\MICD\\Coforge Santander\\02-backend-api" --modo real --actor IA:07-verificador:claude-opus-5
-        caparazón instalado en la carpeta + registro SYPNOSE real por túnel (7101 y 18791). Escribe eventos reales con --actor.
+        caparazón instalado en la carpeta con `instalar_caparazon.py --modo real` (marcador INSTALADO) + registro SYPNOSE real por
+        túnel (7101 y 18791), con SYPNOSE_MODO=real. Escribe eventos reales con --actor.
 """
 from __future__ import annotations
 
@@ -173,15 +175,17 @@ def main() -> None:
         (dir_capa / "config.json").write_text(json.dumps({
             "carpeta": carpeta.name, "carpeta_ruta": str(carpeta), "worktree": str(carpeta / "wt"), "coleccion": "coforge-santander",
             "kb_proyecto": "coforge-santander", "prefijo_planes": "PLAN-CS-", "plan_id": None, "verificador": "07-verificador",
-            "ssh": {"bin": "ssh", "destino": "sypnose@62.171.147.46", "puerto": 2024, "clave": "~/.ssh/id_ed25519_radelqui",
-                    "db": "/home/sypnose/sypnose-f1/registry.db"}}, ensure_ascii=False), encoding="utf-8")
-        env.update(SYPNOSE_REGISTRO_URL=url, SYPNOSE_KB_URL=url, SYPNOSE_REGISTRO_ESCRITURA=f"sqlite:{db}")
-        print(f"[modo local] registro sqlite {db} · API/KB simuladas en {url}")
+            "ssh": {"bin": str(tmp / "sin-ssh" / "ssh.exe"), "destino": "sypnose@62.171.147.46", "puerto": 2024,
+                    "clave": "~/.ssh/id_ed25519_radelqui", "db": "/home/sypnose/sypnose-f1/registry.db"}}, ensure_ascii=False), encoding="utf-8")
+        env.update(SYPNOSE_REGISTRO_URL=url, SYPNOSE_KB_URL=url, SYPNOSE_REGISTRO_ESCRITURA=f"sqlite:{db}", SYPNOSE_MODO="prueba")
+        print(f"[modo local] registro sqlite {db} · API/KB simuladas en {url} · SYPNOSE_MODO=prueba · ssh.bin sin ejecutable (nada sale a la red)")
     else:
         dir_capa = carpeta / ".claude" / "caparazon"
-        if not (dir_capa / "config.json").exists():
-            sys.exit(f"{carpeta} no tiene el caparazón instalado")
-        print(f"[modo real] caparazón {dir_capa} · registro {os.environ.get('SYPNOSE_REGISTRO_URL', 'http://127.0.0.1:7101')} · actor {args.actor}")
+        if not (dir_capa / "INSTALADO").exists():
+            sys.exit(f"{carpeta} no tiene el caparazón instalado (falta {dir_capa / 'INSTALADO'}): instalar_caparazon.py \"{carpeta}\" --modo real")
+        env.update(SYPNOSE_MODO="real")
+        print(f"[modo real] caparazón {dir_capa} · registro {os.environ.get('SYPNOSE_REGISTRO_URL', 'http://127.0.0.1:7101')} · "
+              f"actor {args.actor} · SYPNOSE_MODO=real")
     reg = Registro(db, dir_capa, args.actor, inicio)
     cfg = json.loads((dir_capa / "config.json").read_text(encoding="utf-8"))
     wt = cfg["worktree"]
@@ -487,7 +491,7 @@ def main() -> None:
                                        reg.cuenta("bloqueo:entrega_incompleta") == 2 and reg.cuenta("tarea_entregada") == 2))
 
         # Casos de 07-verificador, x3_entrega2.py (su scratchpad, 15-sep), portados tal cual: sesión nueva por caso con su comprobación.
-        def ataque_entrega(i, nombre, comprobacion_caso, pasos, pegada, rechaza, origen="x3_entrega2.py"):
+        def ataque_entrega(i, nombre, comprobacion_caso, pasos, pegada, rechaza, origen="x3_entrega2.py", etiqueta=None):
             sid_caso = f"{sid}-x3e2-{i}"
             with sqlite3.connect(db) as c:
                 c.execute("UPDATE requisito SET comprobacion=? WHERE plan_id='PLAN-CS-T01'", (comprobacion_caso,))
@@ -509,7 +513,7 @@ def main() -> None:
                 subprocess.run([sys.executable, str(dir_capa / script)], input=json.dumps(entrada, ensure_ascii=False).encode("utf-8"),
                                capture_output=True, env={**os.environ, **env}, timeout=240)
             antes = reg.cuenta("tarea_entregada")
-            caso(f"07-E{i} Stop ({origen}): {nombre}", dir_capa, "stop.py",
+            caso(f"{etiqueta or f'07-E{i} Stop ({origen})'}: {nombre}", dir_capa, "stop.py",
                  {**stop, "session_id": sid_caso,
                   "last_assistant_message": f"ENTREGA\nComprobación: {comprobacion_caso}\nSalida: {pegada}\nLECCIÓN: prueba"}, env,
                  (lambda rc, o, e: rc == 2) if rechaza else (lambda rc, o, e: rc == 0),
@@ -547,6 +551,87 @@ def main() -> None:
              [(f'cd "{wt}" && {comprobacion}', verde_07)], "15 passed in 1.04s", False),
         ], start=6):
             ataque_entrega(i, *args_caso, origen="x3_entrega3.py")
+
+        # '~' en la BD del registro (lead, 15-sep, tras los controles de 07 en x3_entrega4_controles.py): config y comando se comparan con
+        # '~' expandido al home del usuario del destino, y la escritura usa la ruta absoluta.
+        def config_db(valor: str) -> None:
+            datos = json.loads((dir_capa / "config.json").read_text(encoding="utf-8"))
+            datos["ssh"]["db"] = valor
+            (dir_capa / "config.json").write_text(json.dumps(datos, ensure_ascii=False), encoding="utf-8")
+
+        config_db("~/sypnose-f1/registry.db")
+        with sqlite3.connect(db) as c:
+            c.execute("UPDATE requisito SET comprobacion=? WHERE plan_id='PLAN-CS-T01'", (f"{consulta} → ≥1",))
+        caso("B1.3 SessionStart con ssh.db '~/sypnose-f1/registry.db' en el config: el brief enseña la ruta absoluta", dir_capa, "brief.py",
+             {**base, "session_id": sid + "-tilde", "hook_event_name": "SessionStart", "source": "startup", "model": "claude-sonnet-5"}, env,
+             lambda rc, o, e: rc == 0 and "sqlite3 /home/sypnose/sypnose-f1/registry.db" in o)
+        remoto = lambda bd, opciones="": f'ssh {opciones}sypnose@62.171.147.46 "sqlite3 {bd} \\"{consulta}\\""'
+        for i, args_caso in enumerate([
+            ("(s6b de 07) config con ~ y comando con ~ se acepta", f"{consulta} → ≥1", [(remoto("~/sypnose-f1/registry.db"), "1\n")], "1", False),
+            ("(s6 de 07) config con ~ y comando con la ruta absoluta, -i y -p se acepta", f"{consulta} → ≥1",
+             [(remoto("/home/sypnose/sypnose-f1/registry.db", "-i ~/.ssh/id_ed25519_radelqui -p 2024 "), "1\n")], "1", False),
+            ("config con ~ y otra BD del mismo home se rechaza", f"{consulta} → ≥1", [(remoto("~/sypnose-f1/otra.db"), "1\n")], "1", True),
+        ], start=15):
+            ataque_entrega(i, *args_caso, etiqueta=f"B6.{i} Stop (~ en la BD)")
+        config_db("/home/sypnose/sypnose-f1/registry.db")
+        ataque_entrega(18, "config absoluta y comando con ~ se acepta", f"{consulta} → ≥1", [(remoto("~/sypnose-f1/registry.db"), "1\n")], "1", False,
+                       etiqueta="B6.18 Stop (~ en la BD)")
+
+        # Barrera de escritura en vivo (lead, tras el incidente del 15-sep 12:34Z): en vivo solo con SYPNOSE_MODO=real, el marcador INSTALADO
+        # junto a los módulos instalados y la sesión en la carpeta o en su worktree. ssh.bin apunta a un ejecutable que no existe: si la
+        # barrera se abre, el envío falla en el PC ("SSH al registro falló") y nada sale a la red.
+        carpeta_b = tmp / "carpeta-barrera"
+        wt_b = carpeta_b / "wt"
+        wt_b.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(wt_b)], capture_output=True, check=True)
+        instalacion = subprocess.run([sys.executable, str(AQUI.parent / "instalar_caparazon.py"), str(carpeta_b), "--modo", "real"],
+                                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+        dir_b = carpeta_b / ".claude" / "caparazon"
+        cfg_b = json.loads((dir_b / "config.json").read_text(encoding="utf-8"))
+        cfg_b["ssh"]["bin"] = str(tmp / "sin-ssh" / "ssh.exe")
+        (dir_b / "config.json").write_text(json.dumps(cfg_b, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"\n[barrera] instalar_caparazon.py {carpeta_b} --modo real → exit {instalacion.returncode} · INSTALADO={(dir_b / 'INSTALADO').exists()} · "
+              f"ssh.bin={cfg_b['ssh']['bin']} (no existe)")
+        vivo = {**env, "SYPNOSE_REGISTRO_ESCRITURA": "", "SYPNOSE_MODO": "real"}
+
+        def barrera(nombre, dir_c, cwd, entorno, se_abre, pista, kb=False):
+            s = f"{sid}-barrera-{len(RESULTADOS)}"
+            op = ({"op": "kb_guardar", "clave": "leccion-barrera", "valor": "no debe salir del PC", "proyecto": "coforge-santander", "categoria": "leccion"}
+                  if kb else {"op": "evento", "cuando": ahora(), "actor": args.actor, "accion": "prueba_barrera", "plan_id": None, "nodo_id": None,
+                              "detalle": "no debe salir del PC"})
+            (dir_c / "cola").mkdir(parents=True, exist_ok=True)
+            (dir_c / "cola" / f"{s}.jsonl").write_text(json.dumps({"cuando": ahora(), "ops": [op]}, ensure_ascii=False) + "\n", encoding="utf-8")
+            estado_c = dir_c / "cola" / f"{s}.estado.json"
+
+            def despues():
+                fallo = (json.loads(estado_c.read_text(encoding="utf-8")).get("fallo") or {}).get("motivo", "") if estado_c.exists() else ""
+                ops_c = sum(len(json.loads(l)["ops"]) for l in (dir_c / "cola" / f"{s}.jsonl").read_text(encoding="utf-8").splitlines() if l.strip())
+                return comprobar(f"operaciones en la cola={ops_c} · fallo anotado={fallo[:110] or 'ninguno'}",
+                                 ops_c == 1 and (("SSH al registro falló" in fallo) if se_abre else not fallo))
+
+            estado_esperado = '"estado": "fallo"' if se_abre else '"estado": "prueba"'
+            caso(nombre, dir_c, "flush.py", {"session_id": s, "cwd": str(cwd)}, entorno,
+                 lambda rc, o, e: rc == 0 and estado_esperado in o and pista in o, despues=despues)
+
+        barrera("B4.4 barrera: SYPNOSE_MODO=real y escritura ssh desde una copia sin instalar (como el arnés de 07) → modo prueba, cola intacta",
+                dir_capa, wt, vivo, False, "no son la instalación")
+        barrera("B4.5 barrera: instalación completa y sesión en su worktree, pero SYPNOSE_MODO=prueba → modo prueba",
+                dir_b, wt_b, {**vivo, "SYPNOSE_MODO": "prueba"}, False, "SYPNOSE_MODO=prueba")
+        (dir_b / "INSTALADO").rename(dir_b / "INSTALADO.fuera")
+        barrera("B4.6 barrera: SYPNOSE_MODO=real en una instalación sin el marcador INSTALADO → cola local, 0 envíos",
+                dir_b, wt_b, vivo, False, "no existe el marcador")
+        (dir_b / "INSTALADO.fuera").rename(dir_b / "INSTALADO")
+        barrera("B4.7 barrera: SYPNOSE_MODO=real y marcador, pero la sesión trabaja fuera de la carpeta y de su worktree → modo prueba",
+                dir_b, tmp, vivo, False, "fuera de")
+        barrera("B4.8 barrera: KB real por defecto (sin SYPNOSE_KB_URL) con una lección en cola, desde una copia sin instalar → modo prueba",
+                dir_capa, wt, {**env, "SYPNOSE_KB_URL": "", "SYPNOSE_MODO": "real"}, False, "la KB http://127.0.0.1:18791", kb=True)
+        barrera("B4.9 barrera (control): las tres condiciones → se abre y llega al envío por ssh, que falla en el PC (ssh.bin no existe)",
+                dir_b, wt_b, vivo, True, "SSH al registro falló")
+        con_ssh = [f.name for f in (dir_capa / "cola").glob("*.estado.json")
+                   if "SSH al registro" in json.dumps(json.loads(f.read_text(encoding="utf-8")).get("fallo") or {}, ensure_ascii=False)]
+        print(f"\n── B9.1 modo local: ninguna cola del arnés intentó enviar por ssh ──\ncolas con fallo de ssh: {con_ssh or 'ninguna'}\n"
+              f"→ {'NO CUMPLE' if con_ssh else 'CUMPLE'}")
+        RESULTADOS.append(("B9.1 modo local: ninguna cola del arnés intentó enviar por ssh", "NO CUMPLE" if con_ssh else "CUMPLE"))
 
     print(f"\n══ Evidencia en el registro (actor {args.actor}, desde {inicio}) ══")
     if db:
