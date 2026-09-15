@@ -89,18 +89,17 @@ def main() -> None:
     try:
         ts = ahora()
 
-        # (1) Invalidar evidencia 173
-        conn.execute(
-            "INSERT OR IGNORE INTO evidencia (plan_id, fuente, dice) VALUES (?,?,?)",
-            ("PLAN-CS-T06", f"INVALIDA:{EVIDENCIA_INVALIDA}",
-             "fichero inexistente en plantilla y rag-banking-agent; sha no corresponde a rag"),
-        )
+        # (1) Invalidar evidencia 173: prefixar fuente con INVALIDA: para que calcular_certeza la excluya
+        rc_inv = conn.execute(
+            "UPDATE evidencia SET fuente=? WHERE plan_id='PLAN-CS-T06' AND fuente=?",
+            (f"INVALIDA:{EVIDENCIA_INVALIDA}", EVIDENCIA_INVALIDA),
+        ).rowcount
         conn.execute(
             "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
             (ts, ACTOR, "evidencia_invalidada", "PLAN-CS-T06",
-             f"INVALIDA:{EVIDENCIA_INVALIDA}"),
+             f"INVALIDA:{EVIDENCIA_INVALIDA} ({rc_inv} filas marcadas) — 07 la invalida: fichero inexistente"),
         )
-        print(f"[invalidada] {EVIDENCIA_INVALIDA}")
+        print(f"[invalidada] {EVIDENCIA_INVALIDA} ({rc_inv} filas)")
 
         # (2) Añadir fuentes evento:<id> para T06
         insertados = 0
