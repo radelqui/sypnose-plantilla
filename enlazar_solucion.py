@@ -53,6 +53,7 @@ def evento(conn, actor, accion, detalle, nodo_id=None, plan_id=None):
 
 REPO_RAG = Path(__file__).resolve().parent.parent / "rag-banking-agent"
 REPO_SLUG = "vmi3211028:rag-banking-agent"
+AMBITO_PROY = "vmi3211028"
 
 
 def nodo_id_para_ruta(ruta: str) -> str:
@@ -60,6 +61,42 @@ def nodo_id_para_ruta(ruta: str) -> str:
     if ruta.endswith("/**"):
         return f"dir:{REPO_SLUG}:{ruta[:-3]}"
     return f"mod:{REPO_SLUG}:{ruta}"
+
+
+def _dir_id(path: str) -> str:
+    return f"dir:{REPO_SLUG}:{path}"
+
+
+def asegurar_contiene(conn, nid: str, actor: str, altas: list, existian: list):
+    """Ensures a contiene chain from PROY_ID down to nid, creating intermediate dirs as needed."""
+    parts = nid.split(":", 3)
+    if len(parts) < 4:
+        return
+    ruta = parts[3]
+    segs = ruta.split("/")
+    if len(segs) <= 1:
+        padre_id = PROY_ID
+    else:
+        padre_path = "/".join(segs[:-1])
+        padre_id = _dir_id(padre_path)
+        if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (padre_id,)).fetchone():
+            conn.execute(
+                "INSERT INTO nodo (id, tipo, nombre, ambito, vitalidad, descubierto_en, descubierto_por) "
+                "VALUES (?, 'carpeta', ?, ?, 'activo', ?, ?)",
+                (padre_id, padre_path, AMBITO_PROY, ahora(), FUENTE),
+            )
+            evento(conn, actor, "alta_nodo", f"carpeta intermedia {padre_id}", nodo_id=padre_id)
+            altas.append(f"nodo {padre_id}")
+        asegurar_contiene(conn, padre_id, actor, altas, existian)
+    rc = conn.execute(
+        "INSERT OR IGNORE INTO relacion (origen, destino, tipo, certeza, fuente, visto_en) "
+        "VALUES (?, ?, 'contiene', 'observado', ?, ?)",
+        (padre_id, nid, FUENTE, ahora()),
+    ).rowcount
+    if rc == 1:
+        altas.append(f"contiene {padre_id} → {nid}")
+    else:
+        existian.append(f"contiene {padre_id} → {nid}")
 
 
 def ruta_existe_en_repo(ruta: str, sha: str) -> bool:
@@ -536,11 +573,12 @@ def main() -> None:
                     nombre = ruta.rstrip("/*")
                     conn.execute(
                         "INSERT INTO nodo (id, tipo, nombre, ambito, vitalidad, descubierto_en, descubierto_por) "
-                        "VALUES (?, ?, ?, 'coforge-santander', 'activo', ?, ?)",
-                        (nid, tipo, nombre, ahora(), FUENTE),
+                        "VALUES (?, ?, ?, ?, 'activo', ?, ?)",
+                        (nid, tipo, nombre, AMBITO_PROY, ahora(), FUENTE),
                     )
                     evento(conn, args.actor, "alta_nodo", f"nodo {tipo} {nid}", nodo_id=nid)
                     altas.append(f"nodo {nid}")
+                asegurar_contiene(conn, nid, args.actor, altas, existian)
                 existente = conn.execute(
                     "SELECT certeza FROM relacion WHERE origen=? AND destino=? AND tipo='cubre'",
                     (nid, linea_id),
@@ -566,6 +604,16 @@ def main() -> None:
                     evento(conn, args.actor, "relacion_cubre", f"{nid} cubre {linea_id} [{certeza}]", nodo_id=nid)
                     altas.append(f"cubre {nid} → {linea_id} [{certeza}]")
                     cubre_arch_count += 1
+
+        # reconciliar ambito: nodos creados con ambito erróneo → ambito del proyecto
+        ambito_fijos = conn.execute(
+            "SELECT id FROM nodo WHERE (tipo='modulo' OR tipo='carpeta') "
+            "AND id LIKE ? AND ambito='coforge-santander' AND vitalidad='activo'",
+            (f"%{REPO_SLUG}:%",),
+        ).fetchall()
+        for (nid_fix,) in ambito_fijos:
+            conn.execute("UPDATE nodo SET ambito=? WHERE id=?", (AMBITO_PROY, nid_fix))
+            altas.append(f"ambito {nid_fix}: coforge-santander → {AMBITO_PROY}")
 
         # reconciliar módulo→línea: relaciones fuera del yaml → propuesto
         mod_en_bd = conn.execute(
