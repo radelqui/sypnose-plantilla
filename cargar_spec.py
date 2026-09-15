@@ -1,7 +1,9 @@
-"""Carga descripción y por_qué de un spec.md como afirmaciones en el registro.
+"""Carga descripción y por_qué de un spec.md como afirmaciones en el nodo solución.
 
 Lee las secciones "Solución" y el razonamiento de diseño del spec de una línea,
-y las escribe como afirmaciones (certeza=propuesto) en el nodo linea:coforge:<sigla>.
+verifica autoría (Chat: trailer = rol en roles_por_linea), y escribe
+afirmaciones (certeza=propuesto) en sol:coforge:rag-banking-agent con
+campos 'descripcion:<sigla>' / 'por_que:<sigla>' (par solución-línea).
 Idempotente: si el valor ya coincide, 0 cambios.
 
     python3 cargar_spec.py --db ~/sypnose-f1/registry.db T01 specs/T01/spec.md
@@ -17,6 +19,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 from barrera import (
     PLANTILLA_DIR,
     backup_registro,
@@ -25,11 +29,18 @@ from barrera import (
 )
 
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-4-6"
+SOL_ID = "sol:coforge:rag-banking-agent"
 MAX_DESC = 400
+OFERTA_YAML = PLANTILLA_DIR / "oferta.yaml"
 
 
 def ahora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def cargar_roles_por_linea() -> dict:
+    datos = yaml.safe_load(OFERTA_YAML.read_text(encoding="utf-8"))
+    return datos.get("roles_por_linea", {})
 
 
 def obtener_spec_sha(spec_rel: str) -> str:
@@ -40,6 +51,19 @@ def obtener_spec_sha(spec_rel: str) -> str:
     if r.returncode != 0 or not r.stdout.strip():
         sys.exit(f"[FALLO] no hay commit para {spec_rel} en el repo plantilla")
     return r.stdout.strip()
+
+
+def obtener_spec_autor(spec_rel: str) -> str:
+    r = subprocess.run(
+        ["git", "-C", str(PLANTILLA_DIR), "log", "-1", "--format=%(trailers:key=Chat,valueonly)", "--", spec_rel],
+        capture_output=True, text=True, timeout=10,
+    )
+    if r.returncode != 0:
+        sys.exit(f"[FALLO] no se pudo leer trailers de {spec_rel}")
+    autor = r.stdout.strip()
+    if not autor:
+        sys.exit(f"[FALLO] último commit de {spec_rel} no tiene trailer 'Chat:'")
+    return autor
 
 
 def extraer_seccion(texto: str, titulo: str) -> str:
@@ -81,7 +105,7 @@ def extraer_por_que(texto: str) -> str:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Carga descripcion y por_que de spec.md al registro")
+    ap = argparse.ArgumentParser(description="Carga descripcion y por_que de spec.md al nodo solución")
     ap.add_argument("sigla", help="sigla de la línea, ej. T01")
     ap.add_argument("spec", help="ruta al spec.md relativa a plantilla/")
     ap.add_argument("--db", required=True, help="ruta a registry.db")
@@ -96,9 +120,25 @@ def main() -> None:
     if not spec_path.exists():
         sys.exit(f"[FALLO] spec no encontrado: {spec_path}")
 
-    nodo_id = f"linea:coforge:{args.sigla}"
+    roles_por_linea = cargar_roles_por_linea()
+    rol_esperado = roles_por_linea.get(args.sigla, {}).get("rol")
+    if not rol_esperado:
+        sys.exit(f"[FALLO] sigla {args.sigla} no tiene rol en roles_por_linea de oferta.yaml")
+
     spec_rel = args.spec
     spec_sha = obtener_spec_sha(spec_rel)
+    spec_autor = obtener_spec_autor(spec_rel)
+
+    print(f"[spec] {spec_rel} (sha {spec_sha[:12]})")
+    print(f"[autor] Chat: {spec_autor}")
+    print(f"[rol esperado] {rol_esperado}")
+
+    if spec_autor != rol_esperado:
+        sys.exit(
+            f"[FALLO] autoría: último commit de {spec_rel} es Chat: {spec_autor}, "
+            f"pero roles_por_linea exige {rol_esperado} para {args.sigla}"
+        )
+    print("[autoría] OK")
 
     texto = spec_path.read_text(encoding="utf-8")
     descripcion = extraer_descripcion(texto)
@@ -107,13 +147,15 @@ def main() -> None:
     if not descripcion:
         sys.exit("[FALLO] no se pudo extraer descripción del spec")
 
-    print(f"[nodo] {nodo_id}")
-    print(f"[spec] {spec_rel} (sha {spec_sha[:12]})")
-    print(f"[descripcion] ({len(descripcion)} chars) {descripcion[:80]}...")
+    campo_desc = f"descripcion:{args.sigla}"
+    campo_pq = f"por_que:{args.sigla}"
+
+    print(f"[nodo] {SOL_ID}")
+    print(f"[{campo_desc}] ({len(descripcion)} chars) {descripcion[:80]}...")
     if por_que:
-        print(f"[por_que] ({len(por_que)} chars) {por_que[:80]}...")
+        print(f"[{campo_pq}] ({len(por_que)} chars) {por_que[:80]}...")
     else:
-        print("[por_que] (vacío — solo 1 párrafo en Solución)")
+        print(f"[{campo_pq}] (vacío — solo 1 párrafo en Solución)")
 
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA journal_mode=WAL")
@@ -121,19 +163,19 @@ def main() -> None:
     verificar_repo_limpio()
     verificar_canonicos_registrados(conn)
 
-    row = conn.execute("SELECT 1 FROM nodo WHERE id=?", (nodo_id,)).fetchone()
+    row = conn.execute("SELECT 1 FROM nodo WHERE id=?", (SOL_ID,)).fetchone()
     if not row:
-        sys.exit(f"[FALLO] nodo {nodo_id} no existe en el registro")
+        sys.exit(f"[FALLO] nodo {SOL_ID} no existe en el registro")
 
-    campos = {"descripcion": descripcion}
+    campos = {campo_desc: descripcion}
     if por_que:
-        campos["por_que"] = por_que
+        campos[campo_pq] = por_que
 
     cambios = []
     for campo, valor in campos.items():
         existente = conn.execute(
             "SELECT id, valor FROM afirmacion WHERE nodo_id=? AND campo=? AND vigente=1",
-            (nodo_id, campo),
+            (SOL_ID, campo),
         ).fetchone()
         if existente:
             if existente[1] == valor:
@@ -150,7 +192,7 @@ def main() -> None:
 
     if args.dry_run:
         for op, campo, valor, _ in cambios:
-            print(f"[dry-run] {op} {nodo_id}.{campo} = {valor[:60]}...")
+            print(f"[dry-run] {op} {SOL_ID}.{campo} = {valor[:60]}...")
         conn.close()
         return
 
@@ -168,13 +210,13 @@ def main() -> None:
             conn.execute(
                 "INSERT INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando, vigente) "
                 "VALUES (?,?,?,?,?,?,?,1)",
-                (nodo_id, campo, valor, "propuesto", fuente, ACTOR, ts),
+                (SOL_ID, campo, valor, "propuesto", fuente, ACTOR, ts),
             )
             conn.execute(
                 "INSERT INTO evento (cuando, actor, accion, nodo_id, detalle) VALUES (?,?,?,?,?)",
-                (ts, ACTOR, "afirmacion_spec", nodo_id, f"{campo} = {valor[:80]}... · fuente: {fuente}"),
+                (ts, ACTOR, "afirmacion_spec", SOL_ID, f"{campo} = {valor[:80]}... · fuente: {fuente} · autor: {spec_autor}"),
             )
-            print(f"[{op}] {nodo_id}.{campo}")
+            print(f"[{op}] {SOL_ID}.{campo}")
 
         conn.commit()
     except Exception:
@@ -183,7 +225,7 @@ def main() -> None:
     finally:
         conn.close()
 
-    print(f"[OK] {len(cambios)} afirmaciones escritas en {nodo_id} desde {spec_rel}")
+    print(f"[OK] {len(cambios)} afirmaciones escritas en {SOL_ID} desde {spec_rel} (autor {spec_autor})")
 
 
 if __name__ == "__main__":

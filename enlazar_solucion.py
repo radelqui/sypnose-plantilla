@@ -198,7 +198,8 @@ def cargar_oferta_yaml():
         if certeza not in CERTEZAS_VALIDAS:
             sys.exit(f"[FALLO] certeza inválida '{certeza}' para línea {lid}")
     archivos = doc.get("archivos_por_linea", {})
-    return plan_por_linea, cubre_map, archivos
+    lineas_proceso = set(doc.get("lineas_de_proceso", []))
+    return plan_por_linea, cubre_map, archivos, lineas_proceso
 
 
 # ── Certeza calculation from sources ──
@@ -210,6 +211,8 @@ RE_VERIFICADOR = re.compile(r"^07-verificador/.+")
 RE_COMPROBACION = re.compile(r"^comprobacion:.+@([0-9a-f]{6,40})$")
 RE_PLAN_REF = re.compile(r"^plan:(.+)$")
 RE_GIT_REPO = re.compile(r"^git:(.+)$")
+RE_EVENTO = re.compile(r"^evento:(\d+)$")
+RE_GIT_COMMIT = re.compile(r"^git:commit:([0-9a-f]{6,40})$")
 GH_REPO = "radelqui/rag-banking-agent"
 PROYECTO_DIR = PLANTILLA_DIR.parent
 
@@ -284,6 +287,33 @@ def validar_fuente(fuente: str, conn=None, plan_id: str | None = None) -> tuple[
         if unknown_actors:
             return False, f"unratified 07-verificador actor(s): {', '.join(unknown_actors)}"
         return False, "no evidencia_07 event from a ratified actor 07"
+
+    # evento:<id> → event must exist and actor must be a ratified 07
+    m = RE_EVENTO.match(fuente)
+    if m:
+        evento_id = int(m.group(1))
+        if not conn:
+            return False, "needs DB connection"
+        row = conn.execute(
+            "SELECT actor FROM evento WHERE rowid=?", (evento_id,)
+        ).fetchone()
+        if not row:
+            return False, f"evento {evento_id} not found"
+        actor = row[0]
+        if actor.startswith("IA:07-verificador:") and actor07_valido(actor, conn):
+            return True, "ok"
+        if actor.startswith("H:"):
+            if conn.execute("SELECT 1 FROM actor WHERE id=? AND clase='humano'", (actor,)).fetchone():
+                return True, "ok"
+        return False, f"evento {evento_id} actor {actor} not ratified"
+
+    # git:commit:<sha> → commit must exist in rag-banking-agent
+    m = RE_GIT_COMMIT.match(fuente)
+    if m:
+        sha = m.group(1)
+        if _git_object_exists(REPO_RAG, sha):
+            return True, "ok"
+        return False, f"commit {sha} not found in rag-banking-agent"
 
     # git:<repo> → repo directory must exist and be a git repo
     m = RE_GIT_REPO.match(fuente)
@@ -432,7 +462,7 @@ def main() -> None:
     rag_sha = r.stdout.strip()
     print(f"[rag-sha] {rag_sha[:12]}")
 
-    plan_por_linea, cubre_map, archivos_por_linea = cargar_oferta_yaml()
+    plan_por_linea, cubre_map, archivos_por_linea, lineas_proceso = cargar_oferta_yaml()
     cubre_set = set(cubre_map.keys())
     print(f"[oferta.yaml] plan_por_linea: {len(plan_por_linea)} entradas, cubre_por_evidencia: {len(cubre_set)} líneas")
 

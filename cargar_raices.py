@@ -10,9 +10,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 from parser_oferta import extraer_lineas
 
-from barrera import OFERTA_PATH, verificar_repo_limpio
+from barrera import OFERTA_PATH, PLANTILLA_DIR, verificar_repo_limpio
+
+OFERTA_YAML = PLANTILLA_DIR / "oferta.yaml"
 
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-5"
 FUENTE = "plantilla/cargar_raices.py"
@@ -112,6 +116,30 @@ def main() -> None:
                     (ahora(), args.actor, "afirmacion_creada", nodo_id, f"seccion = {l['seccion']}"),
                 )
                 altas.append(f"afirmacion seccion={l['seccion']} en {nodo_id}")
+
+        lineas_proceso = set()
+        if OFERTA_YAML.exists():
+            datos = yaml.safe_load(OFERTA_YAML.read_text(encoding="utf-8"))
+            lineas_proceso = set(datos.get("lineas_de_proceso", []))
+        for l in lineas:
+            if l["id"] in lineas_proceso:
+                nodo_id = f"linea:coforge:{l['id']}"
+                ya = conn.execute(
+                    "SELECT id FROM afirmacion WHERE nodo_id=? AND campo='sin_archivos_por_diseno' AND vigente=1",
+                    (nodo_id,),
+                ).fetchone()
+                if not ya:
+                    conn.execute(
+                        "INSERT INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando) VALUES (?,?,?,?,?,?,?)",
+                        (nodo_id, "sin_archivos_por_diseno", "1", "observado", FUENTE, args.actor, ahora()),
+                    )
+                    conn.execute(
+                        "INSERT INTO evento (cuando, actor, accion, nodo_id, detalle) VALUES (?,?,?,?,?)",
+                        (ahora(), args.actor, "afirmacion_creada", nodo_id, "sin_archivos_por_diseno=1"),
+                    )
+                    altas.append(f"sin_archivos_por_diseno=1 en {nodo_id}")
+                else:
+                    existian.append(f"sin_archivos_por_diseno en {nodo_id}")
 
         conn.execute("ROLLBACK" if args.dry_run else "COMMIT")
     except Exception:
