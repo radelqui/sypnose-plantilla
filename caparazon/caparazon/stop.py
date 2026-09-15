@@ -76,13 +76,25 @@ def terminar(mensaje: str = "") -> None:
     sys.exit(0)
 
 
+def cerrar_incompleta(cfg: dict, estado: dict, motivo: str) -> None:
+    """Con stop_hook_active=true Claude Code ya continuó por un bloqueo: volver a bloquear solo encadena turnos (la doc de hooks lo desaconseja)."""
+    tarea = estado["tarea"]["id"]
+    comun.encolar(estado["session_id"], comun.ops_bloqueo(estado["actor"], "entrega_incompleta", estado["plan"]["id"],
+                                                         f"tarea {tarea} cerrada tras un bloqueo previo sin ENTREGA válida: {motivo}"))
+    aviso = enviar(cfg, estado["session_id"])
+    donde = "registrado en SYPNOSE" if not aviso else "en la cola local"
+    terminar(f"CIERRE SIN ENTREGA VÁLIDA: la tarea {tarea} queda incompleta (bloqueo:entrega_incompleta {donde}). {motivo}"
+             + (f"\n{aviso}" if aviso else ""))
+
+
 def rechazar(cfg: dict, estado: dict, motivo: str, primero: bool) -> None:
-    if primero:
-        comun.encolar(estado["session_id"], comun.ops_bloqueo(estado["actor"], "entrega", estado["plan"]["id"], motivo))
+    if not primero:
+        cerrar_incompleta(cfg, estado, motivo)
+    comun.encolar(estado["session_id"], comun.ops_bloqueo(estado["actor"], "entrega", estado["plan"]["id"], motivo))
     aviso = enviar(cfg, estado["session_id"])
     if aviso:
         sys.stdout.write(json.dumps({"systemMessage": aviso}, ensure_ascii=False))
-    nota = " bloqueo:entrega registrado en SYPNOSE." if primero and not aviso else ""
+    nota = " bloqueo:entrega registrado en SYPNOSE." if not aviso else ""
     comun.bloquear(f"CIERRE IMPEDIDO: {motivo}.{nota}\n{FORMATO_ENTREGA}")
 
 
@@ -133,7 +145,10 @@ def main() -> None:
         huella_pregunta = huella(pregunta.group(2))
         if huella_pregunta not in estado.get("preguntas", []):
             comun.actualizar_estado(sid, lambda e: e.setdefault("preguntas", []).append(huella_pregunta))
-            comun.encolar(sid, [comun.op_evento(estado["actor"], "pregunta_humano", pregunta.group(2)[:500], estado["plan"]["id"])])
+            comun.encolar(sid, [comun.op_evento(estado["actor"], "pregunta_humano", f"{pregunta.group(1)}: {pregunta.group(2)}"[:500],
+                                                estado["plan"]["id"])])
+        aviso = enviar(cfg, sid)
+        terminar(f"Cierre sin ENTREGA ({pregunta.group(1)}) registrado para Carlos como pregunta_humano." + (f"\n{aviso}" if aviso else ""))
     terminar(enviar(cfg, sid))
 
 
