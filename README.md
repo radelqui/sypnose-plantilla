@@ -30,6 +30,24 @@ git pull origin main
 python3 raiz.py sync --db ~/sypnose-f1/registry.db --registrar-hash
 ```
 
+## Regla: sin SQL manual en el registro
+
+NINGUNA escritura directa (SQL manual por SSH o consola) en registry.db. Toda
+escritura va por un script de este directorio que pasa la barrera
+(`verificar_repo_limpio`, `verificar_canonicos_registrados`) y llama a
+`backup_registro()` ANTES de `BEGIN IMMEDIATE`. Scripts de escritura:
+
+| Script | Qué escribe |
+|---|---|
+| `enlazar_solucion.py` | nodos, relaciones cubre, afirmaciones, certeza |
+| `cargar_requisito.py` | requisitos (EARS + comprobación desde spec.md) |
+| `cargar_raices.py` | nodos linea_oferta |
+| `raiz.py` | operaciones de raíz (add/edit/retirar/sync) |
+| `firmar.py` | firmas de tareas |
+| `calcular_coste.py` | coste por modelo |
+| `instanciar.py` | instanciación de planes |
+| `cargar_molde.py` | versiones del molde |
+
 ## historico/
 
 Scripts de corrección de un solo uso (corregir_x1x2.py, corregir_d1d2.py). Conservados
