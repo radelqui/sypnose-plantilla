@@ -218,11 +218,19 @@ def validar_fuente(fuente: str, conn=None, plan_id: str | None = None) -> tuple[
             "SELECT actor FROM evento WHERE accion='evidencia_07' AND plan_id=? AND detalle=?",
             (plan_id, fuente),
         ).fetchall()
+        found_canonical = False
+        unknown_actors = []
         for (actor,) in rows:
             if actor == ACTOR_07:
-                return True, "ok"
-            if "07-verificador" in actor:
-                return False, f"unknown 07-verificador actor: {actor}"
+                found_canonical = True
+            elif "07-verificador" in actor:
+                unknown_actors.append(actor)
+        if found_canonical:
+            for ua in unknown_actors:
+                print(f"  [WARN] unknown 07-verificador actor in events: {ua}")
+            return True, "ok"
+        if unknown_actors:
+            return False, f"unknown 07-verificador actor(s): {', '.join(unknown_actors)}"
         return False, "no evidencia_07 event from actor 07"
 
     # git:<repo> → repo directory must exist and be a git repo
