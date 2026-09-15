@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import hashlib
 import re
+import sqlite3
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 PLANTILLA_DIR = Path(__file__).resolve().parent
@@ -158,6 +160,23 @@ def actor07_valido(actor_id: str, conn, _seen: set | None = None) -> bool:
         if _RE_ACTOR07_ID.match(signer) and actor07_valido(signer, conn, _seen):
             return True
     return False
+
+
+def backup_registro(conn: sqlite3.Connection, db_path: Path, sufijo: str = "pre") -> Path:
+    """Backup ANTES de cualquier escritura. Devuelve la ruta del backup.
+
+    Todos los scripts deben llamar a esta función antes de BEGIN IMMEDIATE.
+    El sufijo identifica el script que hizo el backup.
+    """
+    destino = db_path.with_name(
+        f"registry-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{sufijo}.db"
+    )
+    with sqlite3.connect(str(destino)) as dst:
+        conn.backup(dst)
+    if not destino.exists() or destino.stat().st_size == 0:
+        sys.exit(f"[FALLO] backup vacío o no creado: {destino}")
+    print(f"[backup] {destino} ({destino.stat().st_size} bytes)")
+    return destino
 
 
 def verificar_oferta_canonica(conn, h: str) -> None:

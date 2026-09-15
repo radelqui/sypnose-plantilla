@@ -18,7 +18,7 @@ from pathlib import Path
 
 import yaml
 
-from barrera import PLANTILLA_DIR, actor07_valido, verificar_canonicos_registrados, verificar_repo_limpio
+from barrera import PLANTILLA_DIR, actor07_valido, backup_registro, verificar_canonicos_registrados, verificar_repo_limpio
 
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-4-6"
 FUENTE = "plantilla/enlazar_solucion.py"
@@ -34,15 +34,6 @@ OFERTA_YAML = PLANTILLA_DIR / "oferta.yaml"
 
 def ahora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-
-def backup(conn: sqlite3.Connection, db_path: Path) -> Path:
-    destino = db_path.with_name(f"registry-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}-enlaces.db")
-    dst = sqlite3.connect(destino)
-    with dst:
-        conn.backup(dst)
-    dst.close()
-    return destino
 
 
 def insertar_si_nuevo(conn, sql, args, etiqueta, altas, existian):
@@ -461,8 +452,7 @@ def main() -> None:
     print(f"[registro] {len(lineas)} linea_oferta encontradas")
 
     if not args.dry_run:
-        b = backup(conn, db_path)
-        print(f"[backup] {b} ({b.stat().st_size} bytes)")
+        b = backup_registro(conn, db_path, "enlaces")
 
     altas = []
     existian = []
