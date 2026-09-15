@@ -70,15 +70,36 @@ def obtener_commit_oferta() -> str:
     return r.stdout.strip()
 
 
-def verificar_oferta_canonica(conn, h: str) -> None:
-    reg_hash = conn.execute(
-        "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo='oferta_hash' AND vigente=1",
-        (NODO_PLANTILLA,),
-    ).fetchone()
-    if not reg_hash:
-        sys.exit("[FALLO] no hay oferta_hash registrado. Ejecuta 'raiz.py sync --registrar-hash'.")
-    if reg_hash[0] != h:
-        sys.exit(f"[FALLO] hash ({h}) ≠ canónico ({reg_hash[0]}). Commit + sync --registrar-hash.")
+CAMPO_HASH = {
+    "oferta-coforge.txt": "oferta_hash",
+    "oferta.yaml": "hash:oferta.yaml",
+    "precios.yaml": "hash:precios.yaml",
+}
+
+
+def obtener_plantilla_commit() -> str:
+    r = subprocess.run(
+        ["git", "-C", str(PLANTILLA_DIR), "rev-parse", "HEAD"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        sys.exit("[FALLO] no se encontró HEAD en el repo plantilla")
+    return r.stdout.strip()
+
+
+def verificar_canonicos_registrados(conn) -> None:
+    for f in CANONICOS:
+        campo = CAMPO_HASH[f]
+        contenido = (PLANTILLA_DIR / f).read_text(encoding="utf-8")
+        h = hash_fichero(contenido)
+        reg = conn.execute(
+            "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo=? AND vigente=1",
+            (NODO_PLANTILLA, campo),
+        ).fetchone()
+        if not reg:
+            sys.exit(f"[FALLO] no hay {campo} registrado. Ejecuta 'raiz.py sync --registrar-hash'.")
+        if reg[0] != h:
+            sys.exit(f"[FALLO] {f}: hash ({h}) ≠ registrado ({reg[0]}). Commit + sync --registrar-hash.")
 
     commit = obtener_commit_oferta()
     reg_commit = conn.execute(
@@ -89,3 +110,17 @@ def verificar_oferta_canonica(conn, h: str) -> None:
         sys.exit("[FALLO] no hay oferta_commit registrado. Ejecuta 'raiz.py sync --registrar-hash'.")
     if reg_commit[0] != commit:
         sys.exit(f"[FALLO] commit oferta ({commit[:12]}) ≠ registrado ({reg_commit[0][:12]}). sync --registrar-hash.")
+
+    pc = obtener_plantilla_commit()
+    reg_pc = conn.execute(
+        "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo='plantilla_commit' AND vigente=1",
+        (NODO_PLANTILLA,),
+    ).fetchone()
+    if not reg_pc:
+        sys.exit("[FALLO] no hay plantilla_commit registrado. Ejecuta 'raiz.py sync --registrar-hash'.")
+    if reg_pc[0] != pc:
+        sys.exit(f"[FALLO] plantilla HEAD ({pc[:12]}) ≠ registrado ({reg_pc[0][:12]}). sync --registrar-hash.")
+
+
+def verificar_oferta_canonica(conn, h: str) -> None:
+    verificar_canonicos_registrados(conn)

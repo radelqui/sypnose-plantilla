@@ -18,7 +18,7 @@ import yaml
 
 from barrera import (
     NODO_PLANTILLA, OFERTA_PATH, OFERTA_YAML,
-    hash_fichero, verificar_oferta_canonica, verificar_repo_limpio,
+    hash_fichero, verificar_canonicos_registrados, verificar_repo_limpio,
 )
 
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-5"
@@ -88,7 +88,7 @@ def main():
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 8000")
 
-    verificar_oferta_canonica(conn, h)
+    verificar_canonicos_registrados(conn)
 
     col_id = args.slug
     sol_id = f"sol:{args.slug}"

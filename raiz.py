@@ -18,9 +18,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from barrera import (
-    NODO_PLANTILLA, OFERTA_PATH,
-    hash_fichero, obtener_commit_oferta,
-    verificar_oferta_canonica, verificar_repo_limpio,
+    CAMPO_HASH, CANONICOS, NODO_PLANTILLA, OFERTA_PATH, PLANTILLA_DIR,
+    hash_fichero, obtener_commit_oferta, obtener_plantilla_commit,
+    verificar_canonicos_registrados, verificar_repo_limpio,
 )
 
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-5"
@@ -76,7 +76,7 @@ def cmd_add(args):
     verificar_repo_limpio()
     lineas_parser, h = cargar_oferta()
     conn, db_path = conectar(args.db, args.actor)
-    verificar_oferta_canonica(conn, h)
+    verificar_canonicos_registrados(conn)
 
     existentes = conn.execute(
         "SELECT id FROM nodo WHERE tipo='linea_oferta' AND id LIKE 'linea:coforge:%' ORDER BY id"
@@ -128,7 +128,7 @@ def cmd_edit(args):
         sys.exit(f"[FALLO] {args.id} no existe en el parser (oferta-coforge.txt). Edita primero el fichero fuente.")
 
     conn, db_path = conectar(args.db, args.actor)
-    verificar_oferta_canonica(conn, h)
+    verificar_canonicos_registrados(conn)
 
     nid = nodo_id(args.id)
     actual = conn.execute("SELECT nombre, vitalidad FROM nodo WHERE id=?", (nid,)).fetchone()
@@ -298,7 +298,13 @@ def cmd_sync(args):
     commit_oferta = obtener_commit_oferta()
 
     if args.registrar_hash:
-        for campo, valor_nuevo in [("oferta_hash", h), ("oferta_commit", commit_oferta)]:
+        pc = obtener_plantilla_commit()
+        pares = [("oferta_hash", h), ("oferta_commit", commit_oferta), ("plantilla_commit", pc)]
+        for f in CANONICOS:
+            campo = CAMPO_HASH[f]
+            contenido = (PLANTILLA_DIR / f).read_text(encoding="utf-8")
+            pares.append((campo, hash_fichero(contenido)))
+        for campo, valor_nuevo in pares:
             registrado = conn.execute(
                 "SELECT id, valor FROM afirmacion WHERE nodo_id=? AND campo=? AND vigente=1",
                 (NODO_PLANTILLA, campo),
@@ -313,7 +319,6 @@ def cmd_sync(args):
                     (NODO_PLANTILLA, campo, valor_nuevo, "observado", FUENTE, ACTOR, ahora()),
                 )
                 print(f"[{campo}] registrado: {valor_nuevo[:16]}")
-        # Invalidar el antiguo campo hash_oferta si existe (renombrado a oferta_hash)
         old = conn.execute(
             "SELECT id FROM afirmacion WHERE nodo_id=? AND campo='hash_oferta' AND vigente=1",
             (NODO_PLANTILLA,),
@@ -321,10 +326,10 @@ def cmd_sync(args):
         if old:
             conn.execute("UPDATE afirmacion SET vigente=0 WHERE id=?", (old[0],))
         evento(conn, ACTOR, "oferta_canonizada",
-               f"oferta_hash={h}, oferta_commit={commit_oferta[:12]}",
+               f"hashes={len(pares)} canónicos, plantilla_commit={pc[:12]}",
                nodo_id=NODO_PLANTILLA)
     else:
-        verificar_oferta_canonica(conn, h)
+        verificar_canonicos_registrados(conn)
 
     rows = conn.execute(
         "SELECT id, nombre FROM nodo WHERE tipo='linea_oferta' AND vitalidad!='inactivo_por_diseno' ORDER BY id"

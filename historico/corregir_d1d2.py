@@ -79,7 +79,8 @@ def main():
 
     ya = conn.execute("SELECT 1 FROM evento WHERE actor=? AND accion='plan_rechazado' AND plan_id='PLAN-T-01' LIMIT 1", (ACTOR,)).fetchone()
     if ya:
-        sys.exit("[INFO] corregir_d1d2 ya fue aplicado (evento plan_rechazado PLAN-T-01 existe). Nada que hacer.")
+        print("[INFO] corregir_d1d2 ya fue aplicado (evento plan_rechazado PLAN-T-01 existe). Nada que hacer.")
+        return
 
     if not args.dry_run:
         b = backup(conn, db_path)
