@@ -791,6 +791,59 @@ def main() -> None:
              despues=lambda: comprobar(f"bloqueo:registro_caido en la cola={'bloqueo:registro_caido' in cola_12c()}", "bloqueo:registro_caido" in cola_12c()))
         poner_comprobacion(comprobacion)
 
+        # B13 (lead, 15-sep): varias tareas trabajables en el mismo plan. El brief y cada prompt las listan, 'Tarea: <id>' entrega esa tarea y,
+        # si la tarea del estado ya está entregada y pendiente de juicio, el siguiente prompt pasa a la siguiente trabajable.
+        with sqlite3.connect(db) as c:
+            c.execute("UPDATE requisito SET comprobacion=? WHERE plan_id='PLAN-CS-T01' AND ref='R0'", (c_main,))
+            c.execute("UPDATE requisito SET comprobacion=? WHERE plan_id='PLAN-CS-T01' AND ref='R1'", (c_engine,))
+            c.execute("INSERT INTO tarea (id, plan_id, req_ref, titulo, progreso, agente) VALUES "
+                      "(51, 'PLAN-CS-T01', 'R1', 'B13 segunda tarea', 'pendiente', 'IA:02-backend-api:claude-sonnet-5')")
+            c.execute("INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?, "
+                      "'tarea_trabajando', 'PLAN-CS-T01', 'tarea 33 devuelta → trabajando (arnés: nuevo ciclo de la tarea 33)')", (args.actor,))
+        sid_13 = f"{sid}-b13"
+        base_13, post_13 = {**base, "session_id": sid_13}, {**post, "session_id": sid_13}
+        progreso_de = lambda t: reg.filas("SELECT progreso FROM tarea WHERE id=?", (t,))[0][0]
+        caso("B6.25 SessionStart con dos tareas trabajables: el brief las lista con requisito, progreso y si están entregadas", dir_capa, "brief.py",
+             {**base_13, "hook_event_name": "SessionStart", "source": "startup", "model": "claude-sonnet-5"}, env,
+             lambda rc, o, e: rc == 0 and "tarea 33 · R0 · trabajando · entregada: no" in o and "tarea 51 · R1 · pendiente · entregada: no" in o)
+        caso("B6.25b UserPromptSubmit con dos tareas trabajables: el aviso del prompt también las lista", dir_capa, "prompt_submit.py",
+             {**base_13, "hook_event_name": "UserPromptSubmit", "prompt": "sigue"}, env,
+             lambda rc, o, e: rc == 0 and "tarea 51 · R1 · pendiente · entregada: no" in o)
+        for script, entrada_13 in [
+            ("post_tool_use.py", {**post_13, "tool_name": "Write", "tool_input": {"file_path": permitido, "content": "x"}, "tool_response": {"filePath": permitido}}),
+            ("post_tool_use.py", {**post_13, "tool_name": "Bash", "tool_input": {"command": c_engine},
+                                  "tool_response": {"stdout": verde_b12, "stderr": "", "interrupted": False, "isImage": False}}),
+            ("post_tool_use.py", {**post_13, "tool_name": "Bash", "tool_input": {"command": c_main},
+                                  "tool_response": {"stdout": verde_b12, "stderr": "", "interrupted": False, "isImage": False}}),
+            ("post_tool_use.py", {**post_13, "tool_name": "mcp__ccd_session_mgmt__send_message",
+                                  "tool_input": {"session_id": "sesion-07", "message": "ENTREGA"}, "tool_response": {"ok": True}}),
+        ]:
+            subprocess.run([sys.executable, str(dir_capa / script)], input=json.dumps(entrada_13, ensure_ascii=False).encode("utf-8"),
+                           capture_output=True, env={**os.environ, **env}, timeout=240)
+        entrega_51 = f"ENTREGA\nTarea: 51\nComprobación: {c_engine}\nSalida: 15 passed in 1.04s\nLECCIÓN: prueba B13"
+        caso("B6.26 Stop: ENTREGA con 'Tarea: 51', otra tarea del agente que no es la del estado (33) → entrega la 51", dir_capa, "stop.py",
+             {**stop, "session_id": sid_13, "last_assistant_message": entrega_51}, env,
+             lambda rc, o, e: rc == 0 and "ENTREGA registrada en SYPNOSE" in o,
+             despues=lambda: comprobar(f"última tarea_entregada: {detalles('tarea_entregada')[-1][:60]} · progreso de la 51={progreso_de(51)}",
+                                       detalles("tarea_entregada")[-1].startswith("tarea 51 R1:") and progreso_de(51) == "trabajando"))
+        caso("B6.26b Stop: otra ENTREGA de la 51, que ya está entregada y pendiente de juicio → rechazada", dir_capa, "stop.py",
+             {**stop, "session_id": sid_13, "last_assistant_message": entrega_51 + "\nOtra vez."}, env,
+             lambda rc, o, e: rc == 2 and "la tarea 51 ya está entregada y pendiente de juicio" in e)
+        caso("B6.26c Stop: ENTREGA con 'Tarea: 9', que está en espera_firma → rechazada", dir_capa, "stop.py",
+             {**stop, "session_id": sid_13, "last_assistant_message": f"ENTREGA\nTarea: 9\nComprobación: {c_engine}\nSalida: 15 passed in 1.04s\nLECCIÓN: prueba"},
+             env, lambda rc, o, e: rc == 2 and "la tarea 9 no está abierta (espera_firma)" in e)
+        caso("B6.27a Stop: ENTREGA sin línea Tarea entrega la tarea del estado (33), como hasta ahora", dir_capa, "stop.py",
+             {**stop, "session_id": sid_13, "last_assistant_message": f"ENTREGA\nComprobación: {c_main}\nSalida: 15 passed in 1.04s\nLECCIÓN: prueba B13"},
+             env, lambda rc, o, e: rc == 0 and "ENTREGA registrada en SYPNOSE" in o,
+             despues=lambda: comprobar(f"última tarea_entregada: {detalles('tarea_entregada')[-1][:60]}", detalles("tarea_entregada")[-1].startswith("tarea 33 R0:")))
+        with sqlite3.connect(db) as c:
+            c.execute("INSERT INTO tarea (id, plan_id, req_ref, titulo, progreso, agente) VALUES "
+                      "(52, 'PLAN-CS-T01', 'R1', 'B13 tercera tarea', 'pendiente', 'IA:02-backend-api:claude-sonnet-5')")
+        caso("B6.27 UserPromptSubmit tras entregar la tarea del estado: pasa a la siguiente trabajable (52) y lo dice", dir_capa, "prompt_submit.py",
+             {**base_13, "hook_event_name": "UserPromptSubmit", "prompt": "sigue"}, env,
+             lambda rc, o, e: rc == 0 and "Requisito vigente de la tarea 52" in o and "la tarea 33 está entregada y pendiente de juicio" in o
+             and "tarea 52 · R1 · trabajando · entregada: no" in o)
+
         # Barrera de escritura en vivo (lead, tras el incidente del 15-sep 12:34Z): en vivo solo con SYPNOSE_MODO=real, el marcador INSTALADO
         # junto a los módulos instalados y la sesión en la carpeta o en su worktree. ssh.bin apunta a un ejecutable que no existe: si la
         # barrera se abre, el envío falla en el PC ("SSH al registro falló") y nada sale a la red.

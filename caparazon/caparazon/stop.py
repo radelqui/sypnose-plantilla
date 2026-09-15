@@ -19,6 +19,7 @@ from brief import FORMATO_ENTREGA
 MARCA_ENTREGA = re.compile(r"(?m)^[ \t>#*_-]*ENTREGA\b")
 MARCA_PREGUNTA = re.compile(r"(?m)^[ \t>#*_-]*(PREGUNTA|BLOQUEADO)\s*:\s*(.+)$")
 MARCA_LECCION = re.compile(r"(?mi)^[ \t>#*_-]*LECCI[ÓO]N\s*:\s*(.+)$")
+MARCA_TAREA = re.compile(r"(?mi)^[ \t>#*_-]*Tarea\s*:\s*(\d+)\s*$")
 
 
 def compacto(texto: str) -> str:
@@ -247,15 +248,23 @@ def rechazar(cfg: dict, estado: dict, motivo: str, primero: bool) -> None:
 
 
 def entregar(cfg: dict, estado: dict, bloque: str, primero: bool, entrada: dict) -> None:
+    marca_tarea = MARCA_TAREA.search(bloque)
+    objetivo = int(marca_tarea.group(1)) if marca_tarea else estado["tarea"]["id"]
     # B12 (lead, 15-sep): una entrega es un punto de juicio y se valida contra el requisito vigente del registro, nunca contra la foto.
     try:
         vigente, cambios = brief.refrescar_trabajo(estado, entrada, cfg)
+        if marca_tarea and not vigente.get("abortado"):
+            # B13.2 (lead, 15-sep): 'Tarea: <id>' entrega esa tarea si es del agente en este plan, está abierta y no está entregada sin juicio.
+            vista, motivo = brief.tarea_de_entrega(vigente, objetivo, cfg)
+            if motivo:
+                rechazar(cfg, estado, f"ENTREGA rechazada: {motivo}", primero)
+            vigente = vista
     except comun.RegistroCaido as e:
         comun.encolar(estado["session_id"], comun.ops_bloqueo(estado["actor"], "registro_caido", estado["plan"]["id"],
-                                                             f"ENTREGA de la tarea {estado['tarea']['id']} sin confirmar la comprobación vigente: {e}"))
+                                                             f"ENTREGA de la tarea {objetivo} sin confirmar la comprobación vigente: {e}"))
         rechazar(cfg, estado, "no se pudo confirmar la comprobación vigente: registro caído; reintenta la ENTREGA cuando vuelva", primero)
-    if vigente.get("abortado") or (vigente.get("tarea") or {}).get("id") != estado["tarea"]["id"]:
-        rechazar(cfg, estado, "ENTREGA rechazada: " + "; ".join(cambios or ["la tarea ya no está abierta en el registro"]), primero)
+    if vigente.get("abortado") or (vigente.get("tarea") or {}).get("id") != objetivo:
+        rechazar(cfg, estado, "ENTREGA rechazada: " + "; ".join(cambios or [f"la tarea {objetivo} ya no está abierta en el registro"]), primero)
     estado = vigente
     fallos, leccion, linea_salida, ultima = validar(bloque, estado, cfg)
     if fallos:
@@ -272,7 +281,12 @@ def entregar(cfg: dict, estado: dict, bloque: str, primero: bool, entrada: dict)
                 else f"(últimos {MAX_SALIDA_EVIDENCIA} de {len(salida)} caracteres)\n{salida[-MAX_SALIDA_EVIDENCIA:]}")
     valor = (f"{leccion}\n\nPlan {plan_id} · tarea {tarea['id']} ({tarea['req_ref']}) · {actor} · {cuando}\n"
              f"Comprobación: {comprobacion}\nSalida real: {visible}")
-    comun.encolar(sid, [
+    inicio = []
+    if tarea.get("progreso") in ("pendiente", "devuelta"):
+        # B13.2: la tarea entregada con 'Tarea: <id>' abre su ciclo de trabajo antes de la entrega, para que la detección del juicio pendiente lo vea.
+        inicio = [{"op": "tarea_progreso", "tarea_id": tarea["id"], "progreso": "trabajando", "desde": ["pendiente", "devuelta"],
+                   "evento": comun.op_evento(actor, "tarea_trabajando", f"tarea {tarea['id']} {tarea['progreso']} → trabajando", plan_id, cuando)}]
+    comun.encolar(sid, inicio + [
         comun.op_kb(cfg, clave, valor),
         comun.op_evento(actor, "tarea_entregada", f"tarea {tarea['id']} {tarea['req_ref']}: `{comprobacion}` → {visible} · lección {clave}", plan_id, cuando),
         {"op": "evidencia", "plan_id": plan_id, "nodo_id": None, "fuente": f"entrega:{cfg['carpeta']}",
@@ -281,7 +295,11 @@ def entregar(cfg: dict, estado: dict, bloque: str, primero: bool, entrada: dict)
         {**comun.op_evento(actor, "leccion_guardada", f"KB {cfg['kb_proyecto']}/{clave}", plan_id, cuando), "tras_kb": clave},
         comun.op_evento(actor, "aviso_verificador", f"send_message a {cfg['verificador']} ({estado['aviso_07']['cuando']})", plan_id, cuando),
     ])
-    comun.actualizar_estado(sid, lambda e: e.setdefault("entregas", []).append({"cuando": cuando, "huella": huella(bloque), "kb_clave": clave}))
+    def anotar(e: dict) -> None:
+        e.setdefault("entregas", []).append({"cuando": cuando, "huella": huella(bloque), "kb_clave": clave, "tarea_id": tarea["id"]})
+        e["entregadas_pendientes"] = sorted(set(e.get("entregadas_pendientes") or []) | {tarea["id"]})
+
+    comun.actualizar_estado(sid, anotar)
     envio, aviso = enviar(cfg, sid)
     terminar((f"ENTREGA registrada en SYPNOSE · lección {clave}" if envio in REGISTRADO else f"ENTREGA en la cola local · lección {clave}")
              + (f"\n{aviso}" if aviso else ""))
