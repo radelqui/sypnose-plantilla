@@ -20,7 +20,8 @@ for _flujo in (sys.stdout, sys.stderr):
     _flujo.reconfigure(encoding="utf-8")
 RAIZ = Path(__file__).resolve().parent
 MODULOS = ["comun.py", "cerco.py", "brief.py", "prompt_submit.py", "pre_tool_use.py", "post_tool_use.py", "stop.py",
-           "model_switch.py", "commit_msg.py", "cabeceras_github.py", "precios.yaml"]
+           "model_switch.py", "commit_msg.py", "flush.py", "cabeceras_github.py"]
+PRECIOS = RAIZ.parent / "precios.yaml"
 SERVIDORES = ("sypnose", "knowledge-hub", "github")
 MARCA_INI, MARCA_FIN = "<!-- caparazon:inicio -->", "<!-- caparazon:fin -->"
 
@@ -77,7 +78,7 @@ def es_nuestro(handler: dict, dir_capa: Path) -> bool:
     return any(posix(dir_capa).lower() in posix(a).lower() for a in handler.get("args", []))
 
 
-def quitar_hooks(settings: dict, dir_capa: Path) -> None:
+def quitar_hooks(settings: dict, dir_capa: Path, podar_vacio: bool = True) -> None:
     hooks = settings.get("hooks", {})
     for evento in list(hooks):
         grupos = [{**g, "hooks": [h for h in g.get("hooks", []) if not es_nuestro(h, dir_capa)]} for g in hooks[evento]]
@@ -86,7 +87,7 @@ def quitar_hooks(settings: dict, dir_capa: Path) -> None:
             hooks[evento] = grupos
         else:
             del hooks[evento]
-    if not hooks:
+    if not hooks and podar_vacio:
         settings.pop("hooks", None)
 
 
@@ -104,6 +105,8 @@ def instalar(args, carpeta: Path, wt: Path) -> None:
         destino = dir_capa / nombre
         if escribir(destino, origen.read_text(encoding="utf-8")):
             print(f"  módulo {nombre}")
+    if escribir(dir_capa / "precios.yaml", PRECIOS.read_text(encoding="utf-8")):
+        print(f"  precios.yaml (tabla canónica {PRECIOS})")
     config = {
         "carpeta": carpeta.name, "carpeta_ruta": str(carpeta), "worktree": str(wt),
         "coleccion": args.coleccion, "kb_proyecto": args.kb_proyecto, "prefijo_planes": args.prefijo_planes,
@@ -127,7 +130,7 @@ def instalar(args, carpeta: Path, wt: Path) -> None:
     respaldar_original(settings_p, sello, manifiesto)
     settings = leer_json(settings_p)
     nuevo = sustituir(json.loads((RAIZ / "plantillas" / "settings.json").read_text(encoding="utf-8")), variables)
-    quitar_hooks(settings, dir_capa)
+    quitar_hooks(settings, dir_capa, podar_vacio=False)
     for evento, grupos in nuevo["hooks"].items():
         settings.setdefault("hooks", {}).setdefault(evento, []).extend(grupos)
     anadidos = manifiesto.setdefault("permisos_anadidos", {"allow": [], "deny": []})
@@ -201,8 +204,12 @@ def desinstalar(carpeta: Path, wt: Path) -> None:
         settings["enabledMcpjsonServers"] = servidores
     else:
         settings.pop("enabledMcpjsonServers", None)
-    escribir_json(settings_p, settings)
-    print("  .claude/settings.json sin hooks ni permisos del caparazón")
+    if not settings and manifiesto.get("respaldos", {}).get("settings.json", "") is None:
+        settings_p.unlink(missing_ok=True)
+        print("  .claude/settings.json retirado (no existía antes)")
+    else:
+        escribir_json(settings_p, settings)
+        print("  .claude/settings.json sin hooks ni permisos del caparazón")
     mcp_p = carpeta / ".mcp.json"
     mcp = leer_json(mcp_p)
     for nombre, previo in manifiesto.get("mcp_previos", {}).items():
