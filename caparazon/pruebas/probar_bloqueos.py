@@ -230,9 +230,11 @@ def main() -> None:
          {**post, "tool_name": "Write", "tool_input": {"file_path": permitido, "content": "..."},
           "tool_response": {"filePath": permitido, "type": "update"}, "duration_ms": 12}, env,
          lambda rc, o, e: rc == 0 and '"continue": false' not in o, despues=lambda: comprobar(f"operaciones en cola={en_cola()}", en_cola() > 0))
-    caso("B4.2 flush async --si-toca 60: no envía antes de 60 s", dir_capa, "flush.py", {"session_id": sid}, env,
+    # Claude Code pasa el cwd de la sesión a todos los hooks y la barrera en vivo lo usa: sin él contaría el directorio del proceso
+    # (aquí pruebas/, fuera de la carpeta) y en --modo real el envío se quedaría en modo prueba.
+    caso("B4.2 flush async --si-toca 60: no envía antes de 60 s", dir_capa, "flush.py", {"session_id": sid, "cwd": wt}, env,
          lambda rc, o, e: rc == 0, ("--si-toca", "60"), despues=lambda: comprobar(f"operaciones en cola={en_cola()}", en_cola() > 0))
-    caso("B4.3 flush al vencer el plazo: la cola llega al registro", dir_capa, "flush.py", {"session_id": sid}, env,
+    caso("B4.3 flush al vencer el plazo: la cola llega al registro", dir_capa, "flush.py", {"session_id": sid, "cwd": wt}, env,
          lambda rc, o, e: rc == 0, ("--si-toca", "0"),
          despues=lambda: comprobar(f"registro herramienta:Write={reg.cuenta('herramienta:Write')} bloqueo:cerco={reg.cuenta('bloqueo:cerco')} · cola={en_cola()}",
                                    reg.cuenta("herramienta:Write") >= 1 and en_cola() == 0 and (reg.cuenta("bloqueo:cerco") >= 3 or not abierto)))
@@ -372,7 +374,7 @@ def main() -> None:
     caso("B7.3 registro caído: PostToolUse encola y no para la sesión", dir_capa, "post_tool_use.py",
          {**post, "tool_name": "Read", "tool_input": {"file_path": permitido}, "tool_response": {}}, caido,
          lambda rc, o, e: rc == 0 and '"continue": false' not in o)
-    caso("B7.4 registro caído: el envío periódico falla y lo anota", dir_capa, "flush.py", {"session_id": sid}, caido,
+    caso("B7.4 registro caído: el envío periódico falla y lo anota", dir_capa, "flush.py", {"session_id": sid, "cwd": wt}, caido,
          lambda rc, o, e: rc == 0, ("--si-toca", "0"),
          despues=lambda: comprobar(f"fallo anotado={bool(fallo_cola())} · cola={en_cola()}", bool(fallo_cola()) and en_cola() > 0))
     caso("B7.5 registro caído: aviso visible en la siguiente herramienta", dir_capa, "post_tool_use.py",
@@ -576,6 +578,18 @@ def main() -> None:
         config_db("/home/sypnose/sypnose-f1/registry.db")
         ataque_entrega(18, "config absoluta y comando con ~ se acepta", f"{consulta} → ≥1", [(remoto("~/sypnose-f1/registry.db"), "1\n")], "1", False,
                        etiqueta="B6.18 Stop (~ en la BD)")
+
+        # Sesión abierta antes de instalar (sesión real de 02, 15-sep: sin SessionStart, sesion_iniciada salía con "?" y el brief no
+        # llegaba al modelo): el primer UserPromptSubmit crea el estado, registra de dónde salió y entrega el brief una sola vez.
+        sid_sin = sid + "-sin-inicio"
+        caso("B2.1 UserPromptSubmit sin SessionStart previo: crea el estado y entrega el brief completo", dir_capa, "prompt_submit.py",
+             {**base, "session_id": sid_sin, "hook_event_name": "UserPromptSubmit", "prompt": "sigue"}, env,
+             lambda rc, o, e: rc == 0 and "BRIEF CAPARAZÓN" in o and "texto literal del registro SYPNOSE" in o,
+             despues=lambda: comprobar(f"sesion_iniciada: {[d[:70] for d in detalles('sesion_iniciada') if d.startswith('sin SessionStart')]}",
+                                       any(d.startswith("sin SessionStart: estado creado por UserPromptSubmit") for d in detalles("sesion_iniciada"))))
+        caso("B2.2 UserPromptSubmit siguiente de esa sesión: solo la EARS, el brief no se repite", dir_capa, "prompt_submit.py",
+             {**base, "session_id": sid_sin, "hook_event_name": "UserPromptSubmit", "prompt": "sigue"}, env,
+             lambda rc, o, e: rc == 0 and "BRIEF CAPARAZÓN" not in o and "texto literal del registro SYPNOSE" in o)
 
         # Barrera de escritura en vivo (lead, tras el incidente del 15-sep 12:34Z): en vivo solo con SYPNOSE_MODO=real, el marcador INSTALADO
         # junto a los módulos instalados y la sesión en la carpeta o en su worktree. ssh.bin apunta a un ejecutable que no existe: si la
