@@ -20,6 +20,7 @@ FORMATO_ENTREGA = (
     "LECCIÓN: <una línea útil para el siguiente agente de esta línea de la oferta>\n"
     "Una ENTREGA solo vale si la comprobación pasa: una salida con fallos (failed, error, Traceback, exit code distinto de 0) o un "
     "resultado que no cumple lo esperado tras '→' la invalida.\n"
+    "Con varias tareas abiertas, la línea 'Tarea: <id>' en el bloque ENTREGA entrega esa tarea; sin ella se entrega la tarea del brief.\n"
     "Cuando la entrega no es posible, una última línea 'PREGUNTA: <qué hace falta de Carlos>' o 'BLOQUEADO: <qué impide entregar>' "
     "permite cerrar y queda registrada para Carlos como pregunta_humano. Un segundo intento de cierre sin ENTREGA válida también se "
     "permite, pero la tarea queda como bloqueo:entrega_incompleta."
@@ -49,6 +50,77 @@ def buscar_plan(cfg: dict):
         if validos:
             return validos[0], candidatos, sin_trabajo
     return None, candidatos, sin_trabajo
+
+
+def es_mia(tarea: dict, cfg: dict) -> bool:
+    return str(tarea.get("agente") or "").startswith(f"IA:{cfg['carpeta']}:")
+
+
+ENTREGA_EN_COLA = re.compile(r"^tarea (\d+) ")
+
+
+def entregas_en_cola(plan_id: str) -> set[int]:
+    """Tareas del plan con un tarea_entregada que sigue en una cola local de esta carpeta: el registro todavía no lo tiene."""
+    ids: set[int] = set()
+    for f in sorted(comun.COLA_DIR.glob("*.jsonl")) if comun.COLA_DIR.exists() else []:
+        if f.name.endswith(".rechazadas.jsonl"):
+            continue
+        with contextlib.suppress(OSError, ValueError, KeyError, TypeError):
+            for linea in f.read_text(encoding="utf-8").splitlines():
+                for o in (json.loads(linea)["ops"] if linea.strip() else []):
+                    m = ENTREGA_EN_COLA.match(str(o.get("detalle") or ""))
+                    if m and o.get("accion") == "tarea_entregada" and o.get("plan_id") == plan_id:
+                        ids.add(int(m.group(1)))
+    return ids
+
+
+def pendientes_de_juicio(cfg: dict, plan_id: str, ids: list[int], sabidas=(), espera: float = 45) -> tuple[set[int], str]:
+    """B13 (lead, 15-sep): de las tareas 'trabajando' dadas, las que tienen un tarea_entregada posterior a su último tarea_trabajando (el
+    inicio de su ciclo de trabajo) están entregadas y esperan el juicio de 07. Se consulta el registro, así vale entre sesiones, y se suma
+    lo que siga en la cola local. Si la consulta falla, valen las que sabe la sesión y se devuelve la nota para avisar."""
+    ids = sorted(set(ids))
+    if not ids:
+        return set(), ""
+    en_cola = entregas_en_cola(plan_id) & set(ids)
+    marcas = ",".join("?" * len(ids))
+    sql = (f"SELECT t.id FROM tarea t WHERE t.plan_id=? AND t.id IN ({marcas}) AND t.progreso='trabajando' AND "
+           "(SELECT MAX(e.id) FROM evento e WHERE e.plan_id=t.plan_id AND e.accion='tarea_entregada' AND e.detalle LIKE 'tarea ' || t.id || ' %') > "
+           "COALESCE((SELECT MAX(e.id) FROM evento e WHERE e.plan_id=t.plan_id AND e.accion='tarea_trabajando' "
+           "AND e.detalle LIKE 'tarea ' || t.id || ' %'), 0)")
+    try:
+        filas = comun.escribir(cfg, [{"op": "consulta", "sql": sql, "params": [plan_id, *ids]}], espera=espera)["resultados"][0]["filas"]
+    except (comun.RegistroCaido, comun.RegistroRechazo) as e:
+        return (en_cola | (set(sabidas) & set(ids)),
+                f"no se pudo consultar en el registro qué tareas esperan juicio ({e}); vale lo que sabe esta sesión")
+    return en_cola | {int(f[0]) for f in filas}, ""
+
+
+def listado_tareas(tareas: list[dict], plan_id: str) -> str:
+    """B13.1: con más de una tarea trabajable, todas con su requisito, su progreso y si ya están entregadas."""
+    if len(tareas) < 2:
+        return ""
+    return (f"Tus tareas trabajables en {plan_id}: "
+            + " | ".join(f"tarea {t['id']} · {t['req_ref']} · {t['progreso']} · entregada: {'sí' if t.get('entregada') else 'no'}" for t in tareas)
+            + ". Para entregar una que no es la de este brief, añade la línea «Tarea: <id>» al bloque ENTREGA.")
+
+
+def tarea_de_entrega(estado: dict, tarea_id: int, cfg: dict) -> tuple[dict | None, str | None]:
+    """B13.2: la tarea que nombra 'Tarea: <id>' en el bloque ENTREGA vale si es del agente en este plan, se puede trabajar y no está ya
+    entregada pendiente de juicio. Devuelve (el estado con esa tarea y su requisito, None) o (None, motivo). Lanza RegistroCaido."""
+    plan_id = estado["plan"]["id"]
+    detalle = comun.leer_registro(cfg, "/plan/" + urllib.parse.quote(plan_id, safe=""))
+    t = next((x for x in detalle.get("tareas") or [] if x.get("id") == tarea_id), None)
+    if not t or not es_mia(t, cfg):
+        return None, f"la tarea {tarea_id} no es una tarea de IA:{cfg['carpeta']}:* en {plan_id}"
+    if t.get("progreso") not in PRIORIDAD:
+        return None, f"la tarea {tarea_id} no está abierta ({t.get('progreso')})"
+    if t["progreso"] == "trabajando" and tarea_id in pendientes_de_juicio(cfg, plan_id, [tarea_id], estado.get("entregadas_pendientes") or [],
+                                                                         espera=15)[0]:
+        return None, f"la tarea {tarea_id} ya está entregada y pendiente de juicio de {cfg['verificador']}"
+    req = next((r for r in detalle.get("requisitos") or [] if r.get("ref") == t.get("req_ref")), None)
+    if not req:
+        return None, f"la tarea {tarea_id} apunta al requisito {t.get('req_ref')}, que no existe en {plan_id}"
+    return {**estado, "tarea": {k: t.get(k) for k in ("id", "req_ref", "titulo", "progreso", "agente")}, "requisito": req}, None
 
 
 def resolver_permitidos(plan: dict, cfg: dict) -> tuple[list[str], str]:
@@ -224,6 +296,12 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
         return abortar(estado, cfg, f"ningún plan {cfg.get('prefijo_planes', '')}* tiene tareas para IA:{cfg['carpeta']}:*.", cfg.get("plan_id"), nota_cola)
 
     detalle, mias = encontrado
+    # B13.3 (lead, 15-sep): con varias tareas trabajables, una entregada y pendiente de juicio de 07 pasa detrás de las demás.
+    trabajando = [t["id"] for t in mias if t["progreso"] == "trabajando"] if len(mias) > 1 else []
+    ya_entregadas, nota_juicio = pendientes_de_juicio(cfg, detalle["plan"]["id"], trabajando, previo.get("entregadas_pendientes") or [])
+    for t in mias:
+        t["entregada"] = t["progreso"] == "trabajando" and t["id"] in ya_entregadas
+    mias.sort(key=lambda t: (t["entregada"], PRIORIDAD[t["progreso"]], t["id"]))
     p, tarea = detalle["plan"], mias[0]
     motivo_devolucion = devolucion(detalle, tarea)
     req = next((r for r in detalle["requisitos"] if r["ref"] == tarea["req_ref"]), None)
@@ -240,6 +318,8 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
                                                                    if x.get("ruta") and (c := cerco.cambios_git(x["ruta"])) is not None},
         plan={k: p.get(k) for k in ("id", "que", "para", "estado", "dueno", "worktree", "cuesta", "abierto_en")},
         tarea={k: tarea.get(k) for k in ("id", "req_ref", "titulo", "progreso", "agente")},
+        tareas_trabajables=[{"id": t["id"], "req_ref": t["req_ref"], "progreso": t["progreso"], "entregada": t["entregada"]} for t in mias],
+        entregadas_pendientes=sorted(t["id"] for t in mias if t["entregada"]),
     )
     cuando = comun.ahora()
     # Sin SessionStart (sesión abierta antes de instalar el caparazón) el estado lo crea otro hook, que no trae 'source'.
@@ -259,6 +339,9 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
         with contextlib.suppress(comun.RegistroCaido, KeyError, StopIteration):
             fresco = comun.leer_registro(cfg, "/plan/" + urllib.parse.quote(p["id"], safe=""))
             estado["tarea"]["progreso"] = next(t["progreso"] for t in fresco["tareas"] if t["id"] == tarea["id"])
+            for t in estado["tareas_trabajables"]:
+                if t["id"] == tarea["id"]:
+                    t["progreso"] = estado["tarea"]["progreso"]
     nota_cola = unir_nota(nota_cola, comun.texto_fallo_cola(cfg, r))
     estado["nota_cola"] = nota_cola
     agente_nota = "" if tarea.get("agente") == estado["actor"] else f" (la tarea está asignada a {tarea.get('agente')})"
@@ -270,6 +353,8 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
         f"Línea de la oferta (literal): \"{p['para']}\"",
         f"Qué: {p['que']}",
         f"Tarea {tarea['id']} · requisito {req['ref']} · progreso {estado['tarea']['progreso']}",
+        listado_tareas(estado["tareas_trabajables"], p["id"]),
+        f"Aviso del caparazón: {nota_juicio}" if nota_juicio else "",
         motivo_devolucion,
         f"Requisito {req['ref']} (EARS literal): {req['ears']}",
         f"Comprobación: {req['comprobacion']}",
@@ -293,7 +378,7 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
     return estado
 
 
-def refrescar_trabajo(estado: dict, entrada: dict, cfg: dict) -> tuple[dict, list[str]]:
+def refrescar_trabajo(estado: dict, entrada: dict, cfg: dict, cambiar_si_entregada: bool = False) -> tuple[dict, list[str]]:
     """B12 (lead, 15-sep): el requisito, la tarea y los permitidos vigentes salen del registro, no de la foto guardada en el estado de la
     sesión. Si la tarea ya no se puede trabajar o el plan ya no está abierto, reconstruye el estado. Devuelve el estado y los cambios
     vistos. Lanza comun.RegistroCaido si el registro no responde."""
@@ -309,7 +394,22 @@ def refrescar_trabajo(estado: dict, entrada: dict, cfg: dict) -> tuple[dict, lis
         if plan.get("estado") != "abierto":
             situacion += f", plan {plan.get('estado')}"
         return construir_estado(entrada, cfg), [f"la tarea {tarea.get('id')} ya no se puede trabajar ({situacion}): el caparazón ha vuelto a leer el registro"]
-    anterior, cambios = estado.get("requisito") or {}, []
+    # B13 (lead, 15-sep): con varias tareas trabajables, cada prompt consulta en el registro cuáles están entregadas y pendientes de juicio.
+    # El Stop no consulta aquí: la tarea que nombra 'Tarea: <id>' la comprueba tarea_de_entrega.
+    trabajables = [t for t in detalle.get("tareas") or [] if es_mia(t, cfg) and t.get("progreso") in PRIORIDAD]
+    trabajando, sabidas = [t["id"] for t in trabajables if t["progreso"] == "trabajando"], estado.get("entregadas_pendientes") or []
+    if cambiar_si_entregada and len(trabajables) > 1:
+        en_juicio, nota = pendientes_de_juicio(cfg, plan_id, trabajando, sabidas, espera=15)
+    else:
+        en_juicio, nota = (entregas_en_cola(plan_id) | set(sabidas)) & set(trabajando), ""
+    lista = sorted(({"id": t["id"], "req_ref": t.get("req_ref"), "progreso": t["progreso"], "entregada": t["id"] in en_juicio} for t in trabajables),
+                   key=lambda t: (t["entregada"], PRIORIDAD[t["progreso"]], t["id"]))
+    if cambiar_si_entregada and tarea.get("id") in en_juicio and any(not t["entregada"] for t in lista):
+        # B13.3 (lead, 15-sep): la tarea del estado ya está entregada y pendiente de juicio; el prompt pasa a la siguiente trabajable.
+        nuevo = construir_estado(entrada, cfg)
+        return nuevo, [x for x in (nota, f"la tarea {tarea.get('id')} está entregada y pendiente de juicio: el caparazón pasa a la tarea "
+                                         f"{(nuevo.get('tarea') or {}).get('id')}") if x]
+    anterior, cambios = estado.get("requisito") or {}, [nota] if nota else []
     if req.get("comprobacion") != anterior.get("comprobacion"):
         cambios.append(f"la comprobación de {req.get('ref')} cambió en el registro: ahora es `{req.get('comprobacion')}` "
                        f"(antes `{anterior.get('comprobacion')}`)")
@@ -320,7 +420,8 @@ def refrescar_trabajo(estado: dict, entrada: dict, cfg: dict) -> tuple[dict, lis
         cambios.append(f"los archivos permitidos cambiaron en el registro: {', '.join(permitidos)}")
 
     def aplicar(e: dict) -> None:
-        e.update(requisito=req, tarea={**(e.get("tarea") or {}), "progreso": vigente.get("progreso")}, requisito_confirmado=comun.ahora())
+        e.update(requisito=req, tarea={**(e.get("tarea") or {}), "progreso": vigente.get("progreso")}, requisito_confirmado=comun.ahora(),
+                 tareas_trabajables=lista, entregadas_pendientes=sorted(en_juicio))
         if permitidos:
             e.update(permitidos=permitidos, permitidos_fuente=fuente)
 

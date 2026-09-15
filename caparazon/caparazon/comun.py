@@ -373,7 +373,7 @@ def comando_ssh(cfg: dict) -> list[str]:
             "-p", str(s["puerto"]), s["destino"]]
 
 
-def escribir(cfg: dict, ops: list[dict]) -> dict:
+def escribir(cfg: dict, ops: list[dict], espera: float = 45) -> dict:
     modo = cfg["escritura"]
     if modo.startswith("sqlite:"):
         try:
@@ -396,7 +396,7 @@ def escribir(cfg: dict, ops: list[dict]) -> dict:
                 "    sys.exit(3)\n")
     try:
         p = subprocess.run(comando_ssh(cfg) + ["python3", "-"], input=programa.encode("utf-8"),
-                           capture_output=True, timeout=45, creationflags=SIN_VENTANA)
+                           capture_output=True, timeout=espera, creationflags=SIN_VENTANA)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise RegistroCaido(f"SSH al registro falló: {e}")
     lineas = p.stdout.decode("utf-8", "replace").strip().splitlines()
