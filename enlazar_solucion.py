@@ -395,6 +395,12 @@ def main() -> None:
         if r.returncode != 0 or not r.stdout.strip():
             sys.exit("[FALLO] no se pudo resolver HEAD de rag-banking-agent")
         rag_sha = r.stdout.strip()
+    r = subprocess.run(
+        ["git", "-C", str(REPO_RAG), "cat-file", "-e", f"{rag_sha}^{{commit}}"],
+        capture_output=True, timeout=10,
+    )
+    if r.returncode != 0:
+        sys.exit(f"[FALLO] rag-sha {rag_sha} no es un commit válido en rag-banking-agent")
     print(f"[rag-sha] {rag_sha[:12]}")
 
     plan_por_linea, cubre_map, archivos_por_linea = cargar_oferta_yaml()
