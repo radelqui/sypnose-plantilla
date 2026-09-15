@@ -258,6 +258,23 @@ def main() -> None:
              {**post, "tool_name": "Bash", "tool_input": {"command": f"cd wt && python -m {comprobacion}"},
               "tool_response": {"stdout": "...............\n15 passed in 1.04s", "stderr": "", "interrupted": False, "isImage": False}}, env,
              lambda rc, o, e: rc == 0)
+        verde = f"ENTREGA\nComprobación: {comprobacion}\nSalida: 15 passed in 1.04s\nLECCIÓN: prueba"
+        caso("B6.2a PostToolUseFailure: la comprobación termina con exit code 1 y queda registrada", dir_capa, "post_tool_use.py",
+             {**post, "hook_event_name": "PostToolUseFailure", "tool_name": "Bash", "tool_input": {"command": f"cd wt && python -m {comprobacion}"},
+              "error": "Exit code 1\n.....F.........\n1 failed, 14 passed in 1.21s", "is_interrupt": False}, env, lambda rc, o, e: rc == 0)
+        caso("B6.2b Stop: ENTREGA con la salida verde anterior cuando la última ejecución falló", dir_capa, "stop.py",
+             {**stop, "last_assistant_message": verde}, env, lambda rc, o, e: rc == 2 and "exit code 1" in e)
+        caso("B6.2c PostToolUse: la comprobación en rojo por una tubería (exit 0, '2 failed')", dir_capa, "post_tool_use.py",
+             {**post, "tool_name": "Bash", "tool_input": {"command": f"cd wt && python -m {comprobacion} | tail -3"},
+              "tool_response": {"stdout": "....F....F.....\n2 failed, 13 passed in 1.10s", "stderr": "", "interrupted": False, "isImage": False}}, env,
+             lambda rc, o, e: rc == 0)
+        caso("B6.2d Stop: ENTREGA pegando la salida roja real", dir_capa, "stop.py",
+             {**stop, "last_assistant_message": f"ENTREGA\nComprobación: {comprobacion}\nSalida: 2 failed, 13 passed in 1.10s\nLECCIÓN: prueba"}, env,
+             lambda rc, o, e: rc == 2 and "indica fallo" in e and "2 failed" in e)
+        caso("B6.2e PostToolUse: la comprobación vuelve a verde", dir_capa, "post_tool_use.py",
+             {**post, "tool_name": "Bash", "tool_input": {"command": f"cd wt && python -m {comprobacion}"},
+              "tool_response": {"stdout": "...............\n15 passed in 1.04s", "stderr": "", "interrupted": False, "isImage": False}}, env,
+             lambda rc, o, e: rc == 0)
         caso("B6.3 Stop: ENTREGA con salida inventada", dir_capa, "stop.py",
              {**stop, "last_assistant_message": f"ENTREGA\nComprobación: {comprobacion}\nSalida: 20 passed in 0.50s\nLECCIÓN: prueba"}, env,
              lambda rc, o, e: rc == 2 and "no es la salida real" in e)
@@ -336,6 +353,16 @@ def main() -> None:
         caso("B6.9 Stop: ENTREGA con salida corta inventada", dir_capa, "stop.py",
              {**stop, "session_id": sid_r0, "last_assistant_message": f"ENTREGA\nComprobación: {consulta} → ≥1\nSalida: 2\nLECCIÓN: prueba"}, env,
              lambda rc, o, e: rc == 2 and "no es la salida real" in e)
+        comando_sql = f'ssh sypnose@62.171.147.46 "sqlite3 ~/sypnose-f1/registry.db \\"{consulta}\\""'
+        caso("B6.9a PostToolUse: la consulta devuelve 0", dir_capa, "post_tool_use.py",
+             {**post, "session_id": sid_r0, "tool_name": "Bash", "tool_input": {"command": comando_sql},
+              "tool_response": {"stdout": "0\n", "stderr": "", "interrupted": False, "isImage": False}}, env, lambda rc, o, e: rc == 0)
+        caso("B6.9b Stop: ENTREGA con el 0 real frente a lo esperado ≥1", dir_capa, "stop.py",
+             {**stop, "session_id": sid_r0, "last_assistant_message": f"ENTREGA\nComprobación: {consulta} → ≥1\nSalida: 0\nLECCIÓN: prueba"}, env,
+             lambda rc, o, e: rc == 2 and "no cumple lo esperado ≥1" in e)
+        caso("B6.9c PostToolUse: la consulta vuelve a devolver 1", dir_capa, "post_tool_use.py",
+             {**post, "session_id": sid_r0, "tool_name": "Bash", "tool_input": {"command": comando_sql},
+              "tool_response": {"stdout": "1\n", "stderr": "", "interrupted": False, "isImage": False}}, env, lambda rc, o, e: rc == 0)
         caso("B6.10 Stop: ENTREGA válida de una comprobación 'consulta → esperado'", dir_capa, "stop.py",
              {**stop, "session_id": sid_r0,
               "last_assistant_message": f"ENTREGA\nComprobación: {consulta} → ≥1\nSalida: 1\nLECCIÓN: R0 se cierra registrando R1+ desde el rol, no copiándolo"}, env,
