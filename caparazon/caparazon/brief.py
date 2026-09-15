@@ -230,6 +230,8 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
     estado.update(
         abortado=False, motivo=None, linea=m.group(1) if m else None, requisito=req, permitidos=permitidos,
         permitidos_fuente=fuente_permitidos, sucios_inicio=previo.get("sucios_inicio") or sorted(cerco.cambios_git(cfg["worktree"]) or []),
+        sucios_inicio_extra=previo.get("sucios_inicio_extra") or {x["ruta"]: sorted(c) for x in cfg.get("worktrees_extra") or []
+                                                                   if x.get("ruta") and (c := cerco.cambios_git(x["ruta"])) is not None},
         plan={k: p.get(k) for k in ("id", "que", "para", "estado", "dueno", "worktree", "cuesta", "abierto_en")},
         tarea={k: tarea.get(k) for k in ("id", "req_ref", "titulo", "progreso", "agente")},
     )
@@ -268,6 +270,7 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
         forma_sql(req["comprobacion"], cfg),
         f"Worktree local: {cfg['worktree']}",
         f"Archivos permitidos ({fuente_permitidos}): {', '.join(permitidos)}",
+        *[f"Worktree extra {x['ruta']}: {', '.join(x.get('permitidos') or [])} (y git -C en él)" for x in cfg.get("worktrees_extra") or [] if x.get("ruta")],
         f"Presupuesto: {presupuesto}",
         f"Grafo del repo: {grafo(cfg['worktree'])}",
         f"GitHub (gh): {github(cfg['worktree'])}",
