@@ -153,13 +153,17 @@ def cargar_oferta_yaml():
 RE_FILE_SHA = re.compile(r"^(.+)@([0-9a-f]{6,40})$")
 RE_SECTION = re.compile(r"^(.+)#(.+)@([0-9a-f]{6,40})$")
 RE_GH_RUN = re.compile(r"^gh:run:(\d+)$")
+RE_VERIFICADOR = re.compile(r"^07-verificador/(.+)#(.+)$")
+RE_COMPROBACION = re.compile(r"^comprobacion:.+@([0-9a-f]{6,40})$")
+RE_PLAN_REF = re.compile(r"^plan:(.+)$")
 GH_REPO = "radelqui/rag-banking-agent"
+PROYECTO_DIR = PLANTILLA_DIR.parent
 
 
-def _git_cat_file_exists(sha: str, path: str) -> bool:
+def _git_object_exists(repo: Path, ref: str) -> bool:
     try:
         r = subprocess.run(
-            ["git", "-C", str(REPO_RAG), "cat-file", "-e", f"{sha}:{path}"],
+            ["git", "-C", str(repo), "cat-file", "-e", ref],
             capture_output=True, timeout=10,
         )
         return r.returncode == 0
@@ -167,16 +171,27 @@ def _git_cat_file_exists(sha: str, path: str) -> bool:
         return False
 
 
-def _git_heading_exists(sha: str, path: str, section: str) -> bool:
+def _git_heading_exists(repo: Path, sha: str, path: str, section: str) -> bool:
     try:
         r = subprocess.run(
-            ["git", "-C", str(REPO_RAG), "show", f"{sha}:{path}"],
+            ["git", "-C", str(repo), "show", f"{sha}:{path}"],
             capture_output=True, text=True, timeout=10,
         )
         if r.returncode != 0:
             return False
-        pattern = re.compile(r"^#+\s*" + re.escape(section), re.IGNORECASE | re.MULTILINE)
+        pattern = re.compile(r"^#+\s*" + re.escape(section) + r"\s*$", re.IGNORECASE | re.MULTILINE)
         return bool(pattern.search(r.stdout))
+    except Exception:
+        return False
+
+
+def _file_heading_exists(filepath: Path, section: str) -> bool:
+    if not filepath.exists():
+        return False
+    try:
+        text = filepath.read_text(encoding="utf-8")
+        pattern = re.compile(r"^#+\s*" + re.escape(section) + r"\s*$", re.IGNORECASE | re.MULTILINE)
+        return bool(pattern.search(text))
     except Exception:
         return False
 
@@ -192,30 +207,54 @@ def _gh_run_success(run_id: str) -> bool:
         return False
 
 
-PREFIJOS_ACEPTADOS = ("plan:", "comprobacion:", "07-verificador/")
+def validar_fuente(fuente: str, conn=None) -> tuple[bool, str]:
+    """Returns (valid, reason). Unknown formats are invalid."""
+    # plan:PLAN-ID → plan must exist in DB
+    m = RE_PLAN_REF.match(fuente)
+    if m:
+        plan_id = m.group(1)
+        if conn and conn.execute("SELECT 1 FROM plan WHERE id=?", (plan_id,)).fetchone():
+            return True, "ok"
+        return False, f"plan {plan_id} not found in DB"
 
+    # 07-verificador/VERIFICACION.md#section → heading must exist in file
+    m = RE_VERIFICADOR.match(fuente)
+    if m:
+        filepath = PROYECTO_DIR / "07-verificador" / m.group(1)
+        section = m.group(2)
+        if not filepath.exists():
+            return False, f"file {filepath.name} not found"
+        if _file_heading_exists(filepath, section):
+            return True, "ok"
+        return False, f"heading #{section} not found in {filepath.name}"
 
-def validar_fuente(fuente: str) -> tuple[bool, str]:
-    """Returns (valid, reason)."""
-    if any(fuente.startswith(p) for p in PREFIJOS_ACEPTADOS):
-        return True, "ok (prefix accepted)"
+    # comprobacion:agent/wt@sha → commit must exist
+    m = RE_COMPROBACION.match(fuente)
+    if m:
+        sha = m.group(1)
+        if _git_object_exists(REPO_RAG, sha):
+            return True, "ok"
+        return False, f"commit {sha} not found"
 
+    # file#section@sha → file and heading must exist
     m = RE_SECTION.match(fuente)
     if m:
         path, section, sha = m.groups()
-        if not _git_cat_file_exists(sha, path):
+        if not _git_object_exists(REPO_RAG, f"{sha}:{path}"):
             return False, f"file {path} not found at {sha}"
-        if not _git_heading_exists(sha, path, section):
+        if not _git_heading_exists(REPO_RAG, sha, path, section):
             return False, f"heading #{section} not found in {path}@{sha}"
         return True, "ok"
 
+    # file@sha → file must exist at that commit
     m = RE_FILE_SHA.match(fuente)
     if m:
         path, sha = m.groups()
-        if _git_cat_file_exists(sha, path):
+        if _git_object_exists(REPO_RAG, f"{sha}:{path}"):
             return True, "ok"
         return False, f"file {path} not found at {sha}"
 
+    # gh:run:ID → conclusion must be success
     m = RE_GH_RUN.match(fuente)
     if m:
         run_id = m.group(1)
@@ -223,7 +262,8 @@ def validar_fuente(fuente: str) -> tuple[bool, str]:
             return True, "ok"
         return False, f"gh run {run_id} not success"
 
-    return True, "ok (unrecognized format, accepted)"
+    # Unknown format → invalid
+    return False, f"unrecognized source format"
 
 
 def calcular_certeza(conn, plan_id: str) -> tuple[str, list[str]]:
@@ -252,7 +292,7 @@ def calcular_certeza(conn, plan_id: str) -> tuple[str, list[str]]:
         if re.search(r"\bPARCIAL\b", dice, re.IGNORECASE):
             alguna_falla = True
             razones.append(f"dice contiene PARCIAL: {fuente}")
-        valida, motivo = validar_fuente(fuente)
+        valida, motivo = validar_fuente(fuente, conn)
         if not valida:
             alguna_falla = True
             razones.append(f"fuente inválida: {fuente} ({motivo})")
@@ -273,6 +313,10 @@ def main() -> None:
     args = ap.parse_args()
 
     verificar_repo_limpio()
+
+    if not REPO_RAG.exists() or not (REPO_RAG / ".git").exists():
+        sys.exit(f"[FALLO] repo rag-banking-agent no encontrado en {REPO_RAG}; "
+                 "necesario para validar fuentes file@sha")
 
     plan_por_linea, cubre_map = cargar_oferta_yaml()
     cubre_set = set(cubre_map.keys())
