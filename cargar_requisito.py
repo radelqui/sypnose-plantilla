@@ -179,6 +179,7 @@ def main() -> None:
         (plan_id, ref),
     ).fetchone()
 
+    tareas_afectadas = []
     if existente:
         ears_actual, comp_actual = existente
         if ears_actual == ears and comp_actual == comprobacion:
@@ -186,16 +187,11 @@ def main() -> None:
             conn.close()
             return
 
-        tareas_firmadas = conn.execute(
-            "SELECT id, progreso FROM tarea WHERE plan_id=? AND req_ref=? AND progreso IN ('espera_firma','hecha')",
+        tareas_afectadas = conn.execute(
+            "SELECT id, progreso, verificada_por FROM tarea "
+            "WHERE plan_id=? AND req_ref=? AND progreso IN ('espera_firma','hecha')",
             (plan_id, ref),
         ).fetchall()
-        if tareas_firmadas:
-            ids = ", ".join(f"tarea {t[0]} ({t[1]})" for t in tareas_firmadas)
-            sys.exit(
-                f"[FALLO] el requisito {plan_id}/{ref} cambia pero hay tareas en estado firmable: {ids}. "
-                f"Requiere decisión humana (devolver tareas o aprobar el cambio)."
-            )
 
     if args.dry_run:
         print("[dry-run] habría escrito:")
@@ -203,6 +199,9 @@ def main() -> None:
             print(f"  UPDATE requisito WHERE plan_id={plan_id} AND ref={ref}")
             print(f"  VIEJO ears: {ears_actual[:60]}...")
             print(f"  NUEVO ears: {ears[:60]}...")
+            if tareas_afectadas:
+                for tid, prog, ver in tareas_afectadas:
+                    print(f"  CASCADE tarea {tid} ({prog}) → devuelta")
         else:
             print(f"  INSERT INTO requisito ({plan_id}, {ref}, ...)")
         conn.close()
@@ -212,6 +211,11 @@ def main() -> None:
 
     conn.execute("BEGIN IMMEDIATE")
     try:
+        viejo_nuevo = (
+            f"VIEJO ears: {ears_actual!r} · VIEJO comprobacion: {comp_actual!r} · "
+            f"NUEVO ears: {ears!r} · NUEVO comprobacion: {comprobacion!r}"
+        ) if existente else None
+
         if existente:
             conn.execute(
                 "UPDATE requisito SET ears=?, comprobacion=? WHERE plan_id=? AND ref=?",
@@ -219,11 +223,29 @@ def main() -> None:
             )
             accion = "requisito_actualizado"
             detalle = (
-                f"{ref} · spec_sha: {spec_sha[:12]} · autor: {spec_autor} · "
-                f"VIEJO ears: {ears_actual!r} · VIEJO comprobacion: {comp_actual!r} · "
-                f"NUEVO ears: {ears!r} · NUEVO comprobacion: {comprobacion!r}"
+                f"{ref} · spec_sha: {spec_sha[:12]} · autor: {spec_autor} · {viejo_nuevo}"
             )
             print(f"[update] {plan_id} {ref}")
+
+            for tid, prog, ver in tareas_afectadas:
+                conn.execute(
+                    "UPDATE tarea SET progreso='devuelta', verificada_por=NULL WHERE id=?",
+                    (tid,),
+                )
+                nota_firma = ""
+                if prog == "hecha":
+                    nota_firma = " (firma humana invalidada: el texto verificado ya no es el vigente)"
+                conn.execute(
+                    "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+                    (
+                        ahora(),
+                        args.actor,
+                        "requisito_cambiado",
+                        plan_id,
+                        f"tarea {tid} ({prog}→devuelta){nota_firma} · {viejo_nuevo}",
+                    ),
+                )
+                print(f"[cascade] tarea {tid} ({prog} → devuelta){nota_firma}")
         else:
             conn.execute(
                 "INSERT INTO requisito (plan_id, ref, ears, comprobacion) VALUES (?,?,?,?)",
