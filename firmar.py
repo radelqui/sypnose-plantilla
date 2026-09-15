@@ -73,9 +73,10 @@ def cmd_firma(args):
             "INSERT INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando) VALUES (?,?,?,?,?,?,?)",
             (args.nodo, "firma", f"{args.actor} · {ts}", "declarado", FUENTE, args.actor, ts),
         )
+        detalle_ev = args.detalle if args.detalle else f"firmado por {args.actor}"
         conn.execute(
             "INSERT INTO evento (cuando, actor, accion, nodo_id, detalle) VALUES (?,?,?,?,?)",
-            (ts, args.actor, "firma_humana", args.nodo, f"firmado por {args.actor}"),
+            (ts, args.actor, "firma_humana", args.nodo, detalle_ev),
         )
         conn.execute("COMMIT")
     except Exception:
@@ -224,6 +225,7 @@ def main():
     p_firma.add_argument("--db", required=True)
     p_firma.add_argument("--nodo", required=True, help="nodo a firmar (sol:coforge:rag-banking-agent)")
     p_firma.add_argument("--actor", required=True, help="actor humano (H:carlos)")
+    p_firma.add_argument("--detalle", default="", help="texto detalle para el evento (default: 'firmado por <actor>')")
     p_firma.add_argument("--force", action="store_true", help="versionar firma existente")
 
     p_tarea = sub.add_parser("tarea")
