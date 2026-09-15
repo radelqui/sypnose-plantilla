@@ -47,5 +47,6 @@
       "Bash(git reset --hard *)"
     ]
   },
-  "enabledMcpjsonServers": ["sypnose", "knowledge-hub", "github"]
+  "enabledMcpjsonServers": ["sypnose", "knowledge-hub", "github"],
+  "env": {"SYPNOSE_MODO": "{{MODO}}"}
 }
