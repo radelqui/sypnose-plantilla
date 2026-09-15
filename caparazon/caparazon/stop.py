@@ -46,6 +46,14 @@ FALLO = re.compile(r"(?im)\b[1-9]\d*\s+(?:failed|errors?|failures?)\b|^\s*(?:FAI
 COMPARADOR = re.compile(r"^(≥|>=|≤|<=|==|=|>|<)?\s*(-?\d+(?:[.,]\d+)?)$")
 OPERACIONES = {"≥": operator.ge, ">=": operator.ge, "≤": operator.le, "<=": operator.le, ">": operator.gt, "<": operator.lt,
                "=": operator.eq, "==": operator.eq, None: operator.eq}
+RESUMEN = re.compile(r"(?i)\b\d+\s+(?:passed|failed|errors?|skipped|xfailed|xpassed|deselected)\b|\bno tests ran\b|^\s*Ran \d+ tests? in\b|^\s*(?:OK|FAILED)\b")
+MAX_SALIDA_EVIDENCIA = 3000
+REGISTRADO = ("ok", "vacia", "kb_pendiente")
+
+
+def resumen_de(salida: str) -> str | None:
+    """Última línea de resumen de la salida (pytest 'N passed in …', unittest 'Ran N tests' u 'OK'), si la trae."""
+    return next((l.strip() for l in reversed(salida.splitlines()) if RESUMEN.search(l)), None)
 
 
 def esperado_de(comprobacion: str) -> str | None:
@@ -200,13 +208,13 @@ def validar(bloque: str, estado: dict, cfg: dict):
         fallos.append("falta la línea 'LECCIÓN: ...' (se guarda en la KB con clave leccion-linea-<T>-<fecha>)")
     if not estado.get("aviso_07"):
         fallos.append("falta el aviso a 07-verificador: send_message a su sesión con el bloque ENTREGA (list_sessions para encontrarla)")
-    return fallos, (leccion.group(1).strip() if leccion else None), linea_salida
+    return fallos, (leccion.group(1).strip() if leccion else None), linea_salida, (ejecuciones[-1] if ejecuciones else None)
 
 
-def enviar(cfg: dict, sid: str) -> str:
-    """Envía la cola al registro y a la KB. Devuelve '' si llegó todo, o el aviso visible si no."""
+def enviar(cfg: dict, sid: str) -> tuple[str, str]:
+    """Envía la cola al registro y a la KB. Devuelve el estado del envío y el aviso visible ('' si llegó todo)."""
     r = comun.vaciar(cfg, sid, "stop", esperar=30)
-    return "" if r["estado"] in ("ok", "vacia") else comun.texto_fallo_cola(cfg, r)
+    return r["estado"], ("" if r["estado"] in ("ok", "vacia") else comun.texto_fallo_cola(cfg, r))
 
 
 def terminar(mensaje: str = "") -> None:
@@ -220,8 +228,8 @@ def cerrar_incompleta(cfg: dict, estado: dict, motivo: str) -> None:
     tarea = estado["tarea"]["id"]
     comun.encolar(estado["session_id"], comun.ops_bloqueo(estado["actor"], "entrega_incompleta", estado["plan"]["id"],
                                                          f"tarea {tarea} cerrada tras un bloqueo previo sin ENTREGA válida: {motivo}"))
-    aviso = enviar(cfg, estado["session_id"])
-    donde = "registrado en SYPNOSE" if not aviso else "en la cola local"
+    envio, aviso = enviar(cfg, estado["session_id"])
+    donde = "registrado en SYPNOSE" if envio in REGISTRADO else "en la cola local"
     terminar(f"CIERRE SIN ENTREGA VÁLIDA: la tarea {tarea} queda incompleta (bloqueo:entrega_incompleta {donde}). {motivo}"
              + (f"\n{aviso}" if aviso else ""))
 
@@ -230,34 +238,42 @@ def rechazar(cfg: dict, estado: dict, motivo: str, primero: bool) -> None:
     if not primero:
         cerrar_incompleta(cfg, estado, motivo)
     comun.encolar(estado["session_id"], comun.ops_bloqueo(estado["actor"], "entrega", estado["plan"]["id"], motivo))
-    aviso = enviar(cfg, estado["session_id"])
+    envio, aviso = enviar(cfg, estado["session_id"])
     if aviso:
         sys.stdout.write(json.dumps({"systemMessage": aviso}, ensure_ascii=False))
-    nota = " bloqueo:entrega registrado en SYPNOSE." if not aviso else ""
+    nota = " bloqueo:entrega registrado en SYPNOSE." if envio in REGISTRADO else ""
     comun.bloquear(f"CIERRE IMPEDIDO: {motivo}.{nota}\n{FORMATO_ENTREGA}")
 
 
 def entregar(cfg: dict, estado: dict, bloque: str, primero: bool) -> None:
-    fallos, leccion, linea_salida = validar(bloque, estado, cfg)
+    fallos, leccion, linea_salida, ultima = validar(bloque, estado, cfg)
     if fallos:
         rechazar(cfg, estado, "ENTREGA rechazada: " + "; ".join(fallos), primero)
     sid, plan_id, actor, tarea = estado["session_id"], estado["plan"]["id"], estado["actor"], estado["tarea"]
     comprobacion = estado["requisito"]["comprobacion"]
     clave = f"leccion-linea-{estado.get('linea') or 'SIN-LINEA'}-{datetime.now():%d%m%y-%H%M}"
     cuando = comun.ahora()
+    # La evidencia lleva la línea de resumen si la salida la trae (la pegada puede ser la de puntos) y la salida completa.
+    salida = (ultima or {}).get("salida") or ""
+    resumen = resumen_de(salida)
+    visible = (resumen or linea_salida) + ("" if resumen else " (la salida no trae línea de resumen)")
+    completa = (salida if len(salida) <= MAX_SALIDA_EVIDENCIA
+                else f"(últimos {MAX_SALIDA_EVIDENCIA} de {len(salida)} caracteres)\n{salida[-MAX_SALIDA_EVIDENCIA:]}")
     valor = (f"{leccion}\n\nPlan {plan_id} · tarea {tarea['id']} ({tarea['req_ref']}) · {actor} · {cuando}\n"
-             f"Comprobación: {comprobacion}\nSalida real: {linea_salida}")
+             f"Comprobación: {comprobacion}\nSalida real: {visible}")
     comun.encolar(sid, [
         comun.op_kb(cfg, clave, valor),
-        comun.op_evento(actor, "tarea_entregada", f"tarea {tarea['id']} {tarea['req_ref']}: `{comprobacion}` → {linea_salida} · lección {clave}", plan_id, cuando),
+        comun.op_evento(actor, "tarea_entregada", f"tarea {tarea['id']} {tarea['req_ref']}: `{comprobacion}` → {visible} · lección {clave}", plan_id, cuando),
         {"op": "evidencia", "plan_id": plan_id, "nodo_id": None, "fuente": f"entrega:{cfg['carpeta']}",
-         "dice": f"evento {{evento}} ({cuando}) {actor}: `{comprobacion}` → {linea_salida}"},
-        comun.op_evento(actor, "leccion_guardada", f"KB {cfg['kb_proyecto']}/{clave}", plan_id, cuando),
+         "dice": f"evento {{evento}} ({cuando}) {actor}: `{comprobacion}` → {visible} · exit {(ultima or {}).get('exit_code', 0)}\n"
+                 f"Salida completa:\n{completa}"},
+        {**comun.op_evento(actor, "leccion_guardada", f"KB {cfg['kb_proyecto']}/{clave}", plan_id, cuando), "tras_kb": clave},
         comun.op_evento(actor, "aviso_verificador", f"send_message a {cfg['verificador']} ({estado['aviso_07']['cuando']})", plan_id, cuando),
     ])
     comun.actualizar_estado(sid, lambda e: e.setdefault("entregas", []).append({"cuando": cuando, "huella": huella(bloque), "kb_clave": clave}))
-    aviso = enviar(cfg, sid)
-    terminar(f"ENTREGA registrada en SYPNOSE · lección {clave}" if not aviso else f"ENTREGA en la cola local · lección {clave}\n{aviso}")
+    envio, aviso = enviar(cfg, sid)
+    terminar((f"ENTREGA registrada en SYPNOSE · lección {clave}" if envio in REGISTRADO else f"ENTREGA en la cola local · lección {clave}")
+             + (f"\n{aviso}" if aviso else ""))
 
 
 def main() -> None:
@@ -268,13 +284,13 @@ def main() -> None:
     texto = entrada.get("last_assistant_message") or ""
     primero = not entrada.get("stop_hook_active")
     if estado is None or estado.get("abortado"):
-        terminar(enviar(cfg, sid))
+        terminar(enviar(cfg, sid)[1])
     marca = MARCA_ENTREGA.search(texto)
     if marca:
         bloque = texto[marca.start():]
         if not any(x.get("huella") == huella(bloque) for x in estado.get("entregas", [])):
             entregar(cfg, estado, bloque, primero)
-        terminar(enviar(cfg, sid))
+        terminar(enviar(cfg, sid)[1])
     ultima_entrega = max((x["cuando"] for x in estado.get("entregas", [])), default="")
     pendientes = [x for x in estado.get("escrituras", []) if x["cuando"] > ultima_entrega]
     if pendientes:
@@ -286,9 +302,9 @@ def main() -> None:
             comun.actualizar_estado(sid, lambda e: e.setdefault("preguntas", []).append(huella_pregunta))
             comun.encolar(sid, [comun.op_evento(estado["actor"], "pregunta_humano", f"{pregunta.group(1)}: {pregunta.group(2)}"[:500],
                                                 estado["plan"]["id"])])
-        aviso = enviar(cfg, sid)
+        _, aviso = enviar(cfg, sid)
         terminar(f"Cierre sin ENTREGA ({pregunta.group(1)}) registrado para Carlos como pregunta_humano." + (f"\n{aviso}" if aviso else ""))
-    terminar(enviar(cfg, sid))
+    terminar(enviar(cfg, sid)[1])
 
 
 if __name__ == "__main__":
