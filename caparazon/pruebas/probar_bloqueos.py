@@ -79,7 +79,8 @@ def simulador(db: Path) -> str:
                         "plan": dict(plan),
                         "requisitos": [dict(r) for r in c.execute("SELECT ref, ears, comprobacion FROM requisito WHERE plan_id=? ORDER BY ref", (plan["id"],))],
                         "tareas": [dict(r) for r in c.execute("SELECT id, req_ref, titulo, progreso, agente, coste, bloqueada_por, verificada_por FROM tarea WHERE plan_id=? ORDER BY id", (plan["id"],))],
-                        "objetivos": [], "eventos": []})
+                        "objetivos": [],
+                        "eventos": [dict(r) for r in c.execute("SELECT cuando, actor, accion, detalle FROM evento WHERE plan_id=? ORDER BY id DESC LIMIT 30", (plan["id"],))]})
                 return self.responder(404, {"error": "no existe"})
             finally:
                 c.close()
@@ -304,6 +305,43 @@ def main() -> None:
                                    f"colas={en_cola()}/{en_cola(sid + '-caido')}",
                                    reg.cuenta("bloqueo:registro_caido") >= 1 and en_cola() == 0 and en_cola(sid + "-caido") == 0))
 
+    if args.modo == "local":
+        # Estado real de PLAN-CS-T01 el 15-sep: tarea 9 (R1) en espera_firma y tarea 33 (R0) devuelta con comprobación "consulta → esperado".
+        with sqlite3.connect(db) as c:
+            c.executescript("""
+              INSERT OR IGNORE INTO actor VALUES ('IA:07-verificador:claude-opus-5', 'ia', '07-verificador', 'claude-opus-5');
+              INSERT INTO requisito VALUES ('PLAN-CS-T01', 'R0',
+                'Antes de escribir código para esta línea, el rol 02-backend-api DEBE registrar el requisito comprobable de su solución (R1+) con su comprobación ejecutable',
+                'SELECT COUNT(*) FROM requisito WHERE plan_id=''PLAN-CS-T01'' AND ref<>''R0'' → ≥1');
+              INSERT INTO tarea (id, plan_id, req_ref, titulo, progreso, agente)
+                VALUES (33, 'PLAN-CS-T01', 'R0', 'Definir requisito y comprobación de la línea', 'devuelta', 'IA:02-backend-api:claude-sonnet-5');
+              UPDATE tarea SET progreso='espera_firma', verificada_por='IA:07-verificador:claude-opus-5' WHERE id=9;
+              INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'), 'IA:07-verificador:claude-opus-5',
+                'bloqueo:verificador', 'PLAN-CS-T01', 'tarea 33 (R0): NO CUMPLE → devuelta (motivo de prueba B1.2)');
+            """)
+        consulta = "SELECT COUNT(*) FROM requisito WHERE plan_id='PLAN-CS-T01' AND ref<>'R0'"
+        sid_r0 = sid + "-r0"
+        progreso = lambda t: reg.filas("SELECT progreso FROM tarea WHERE id=?", (t,))[0][0]
+        caso("B1.2 SessionStart: una tarea en espera_firma no se trabaja; elige la devuelta y enseña el motivo", dir_capa, "brief.py",
+             {**base, "session_id": sid_r0, "hook_event_name": "SessionStart", "source": "startup", "model": "claude-sonnet-5"}, env,
+             lambda rc, o, e: rc == 0 and "Tarea 33" in o and "motivo de prueba B1.2" in o and "GitHub (gh):" in o,
+             despues=lambda: comprobar(f"tarea 9={progreso(9)} · tarea 33={progreso(33)}", progreso(9) == "espera_firma" and progreso(33) == "trabajando"))
+        caso("B6.7 PostToolUse: se ejecuta una comprobación 'consulta → esperado' con salida corta", dir_capa, "post_tool_use.py",
+             {**post, "session_id": sid_r0, "tool_name": "Bash", "tool_input": {"command": f'ssh sypnose@62.171.147.46 "sqlite3 ~/sypnose-f1/registry.db \\"{consulta}\\""'},
+              "tool_response": {"stdout": "1\n", "stderr": "", "interrupted": False, "isImage": False}}, env, lambda rc, o, e: rc == 0)
+        caso("B6.8 PostToolUse: aviso a 07 de la tarea 33", dir_capa, "post_tool_use.py",
+             {**post, "session_id": sid_r0, "tool_name": "mcp__ccd_session_mgmt__send_message",
+              "tool_input": {"session_id": "sesion-07", "message": f"ENTREGA PLAN-CS-T01 tarea 33: {consulta} → 1"}, "tool_response": {"ok": True}}, env,
+             lambda rc, o, e: rc == 0)
+        caso("B6.9 Stop: ENTREGA con salida corta inventada", dir_capa, "stop.py",
+             {**stop, "session_id": sid_r0, "last_assistant_message": f"ENTREGA\nComprobación: {consulta} → ≥1\nSalida: 2\nLECCIÓN: prueba"}, env,
+             lambda rc, o, e: rc == 2 and "no es la salida real" in e)
+        caso("B6.10 Stop: ENTREGA válida de una comprobación 'consulta → esperado'", dir_capa, "stop.py",
+             {**stop, "session_id": sid_r0,
+              "last_assistant_message": f"ENTREGA\nComprobación: {consulta} → ≥1\nSalida: 1\nLECCIÓN: R0 se cierra registrando R1+ desde el rol, no copiándolo"}, env,
+             lambda rc, o, e: rc == 0 and "ENTREGA registrada en SYPNOSE" in o,
+             despues=lambda: comprobar(f"registro tarea_entregada={reg.cuenta('tarea_entregada')}", reg.cuenta("tarea_entregada") == 2))
+
     print(f"\n══ Evidencia en el registro (actor {args.actor}, desde {inicio}) ══")
     if db:
         print("tarea 9:", reg.filas("SELECT progreso FROM tarea WHERE id=9"))
@@ -313,7 +351,7 @@ def main() -> None:
         m = re.search(r"\((\d{4}-\d\d-\d\dT[^)]+)\)", fila[2])
         if m and m.group(1) >= inicio:
             print("  evidencia", fila)
-    for s in (sid, sid + "-2", sid + "-caido", sid + "-vuelta"):
+    for s in (sid, sid + "-2", sid + "-caido", sid + "-vuelta", sid + "-r0"):
         for f in [dir_capa / "estado" / f"{s}.json", dir_capa / "cola" / f"{s}.estado.json"]:
             f.unlink(missing_ok=True)
     shutil.rmtree(tmp, ignore_errors=True)
