@@ -157,6 +157,7 @@ RE_VERIFICADOR = re.compile(r"^07-verificador/.+")
 RE_COMPROBACION = re.compile(r"^comprobacion:.+@([0-9a-f]{6,40})$")
 RE_PLAN_REF = re.compile(r"^plan:(.+)$")
 RE_GIT_REPO = re.compile(r"^git:(.+)$")
+ACTOR_07 = "IA:07-verificador:claude-opus-5"
 GH_REPO = "radelqui/rag-banking-agent"
 PROYECTO_DIR = PLANTILLA_DIR.parent
 
@@ -207,26 +208,20 @@ def validar_fuente(fuente: str, conn=None, plan_id: str | None = None) -> tuple[
             return True, "ok"
         return False, f"plan {plan_id} not found in DB"
 
-    # 07-verificador/* → valid only if evento has matching row from actor 07
-    # (lead decision: exact canonical actor from DB, no LIKE, no file reads)
+    # 07-verificador/* → valid only if evento has matching row from the canonical actor 07
     if RE_VERIFICADOR.match(fuente):
         if ".." in fuente:
             return False, "path traversal rejected"
         if not conn or not plan_id:
             return False, "needs DB connection and plan_id"
-        actor_07 = conn.execute(
-            "SELECT id FROM actor WHERE id LIKE 'IA:07-verificador:%'"
-        ).fetchone()
-        if not actor_07:
-            return False, "no 07-verificador actor registered"
         rows = conn.execute(
             "SELECT actor FROM evento WHERE accion='evidencia_07' AND plan_id=? AND detalle=?",
             (plan_id, fuente),
         ).fetchall()
         for (actor,) in rows:
-            if actor == actor_07[0]:
+            if actor == ACTOR_07:
                 return True, "ok"
-            if "07-verificador" in actor and actor != actor_07[0]:
+            if "07-verificador" in actor:
                 return False, f"unknown 07-verificador actor: {actor}"
         return False, "no evidencia_07 event from actor 07"
 
