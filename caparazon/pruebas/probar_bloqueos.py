@@ -115,6 +115,12 @@ def comprobar(texto: str, ok: bool) -> str:
     return texto if ok else "FALLA: " + texto
 
 
+def trailers_git(fichero: Path) -> list[str]:
+    """Claves que git reconoce como trailers en el mensaje, igual que `git log --format=%(trailers)`."""
+    p = subprocess.run(["git", "interpret-trailers", "--parse", str(fichero)], capture_output=True, text=True, encoding="utf-8")
+    return [linea.split(":", 1)[0] for linea in p.stdout.splitlines() if ":" in linea]
+
+
 def caso(nombre, dir_capa, script, entrada, env, esperado, args=(), despues=None):
     t = time.monotonic()
     p = subprocess.run([sys.executable, str(dir_capa / script), *args], input=json.dumps(entrada or {}, ensure_ascii=False).encode("utf-8"),
@@ -226,14 +232,25 @@ def main() -> None:
          despues=lambda: comprobar(f"registro herramienta:Write={reg.cuenta('herramienta:Write')} bloqueo:cerco={reg.cuenta('bloqueo:cerco')} · cola={en_cola()}",
                                    reg.cuenta("herramienta:Write") >= 1 and en_cola() == 0 and (reg.cuenta("bloqueo:cerco") >= 3 or not abierto)))
 
+    pie = f"Chat: {cfg['carpeta']}\nModel: claude-sonnet-5\nPlan: PLAN-CS-T01\nTarea: 9"
     mensajes = {"sin_pie": "prueba B9: commit sin pie\n",
-                "con_pie": f"prueba B9: commit con pie\n\nChat: {cfg['carpeta']}\nModel: claude-sonnet-5\nPlan: PLAN-CS-T01\nTarea: 9\n"}
+                "con_pie": f"prueba B9: commit con pie\n\n{pie}\nCo-Authored-By: Prueba <prueba@example.com>\n",
+                "pie_separado": f"prueba B9: pie y Co-Authored-By en párrafos distintos\n\nCuerpo.\n\n{pie}\n\nCo-Authored-By: Prueba <prueba@example.com>\n",
+                "pie_en_medio": f"prueba B9: pie en medio del cuerpo\n\n{pie}\n\nExplicación final que no es un trailer.\n"}
     for nombre, texto in mensajes.items():
         (tmp / f"{nombre}.txt").write_text(texto, encoding="utf-8")
     caso("B5.1 commit-msg: mensaje sin pie Chat/Model/Plan/Tarea", dir_capa, "commit_msg.py", None, env,
          lambda rc, o, e: rc == 1 and "COMMIT RECHAZADO" in e, (str(tmp / "sin_pie.txt"),))
-    caso("B5.2 commit-msg (control): mensaje con pie completo", dir_capa, "commit_msg.py", None, env, lambda rc, o, e: rc == 0,
-         (str(tmp / "con_pie.txt"),))
+    caso("B5.2 commit-msg (control): pie completo en el último párrafo con Co-Authored-By", dir_capa, "commit_msg.py", None, env,
+         lambda rc, o, e: rc == 0, (str(tmp / "con_pie.txt"),),
+         despues=lambda: comprobar(f"trailers para git: {trailers_git(tmp / 'con_pie.txt')}",
+                                   {"Chat", "Model", "Plan", "Tarea", "Co-Authored-By"} <= set(trailers_git(tmp / "con_pie.txt"))))
+    caso("B5.4 commit-msg: pie y Co-Authored-By en párrafos finales distintos → se unen en un bloque que git lee como trailers", dir_capa,
+         "commit_msg.py", None, env, lambda rc, o, e: rc == 0, (str(tmp / "pie_separado.txt"),),
+         despues=lambda: comprobar(f"trailers para git tras normalizar: {trailers_git(tmp / 'pie_separado.txt')}",
+                                   {"Chat", "Model", "Plan", "Tarea", "Co-Authored-By"} <= set(trailers_git(tmp / "pie_separado.txt"))))
+    caso("B5.5 commit-msg: Chat/Model/Plan/Tarea en medio del cuerpo y no en el último párrafo", dir_capa, "commit_msg.py", None, env,
+         lambda rc, o, e: rc == 1 and "último párrafo" in e, (str(tmp / "pie_en_medio.txt"),))
     if args.modo == "real":
         cabeza = subprocess.run(["git", "-C", wt, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
         p = subprocess.run(["git", "-C", wt, "commit", "--allow-empty", "-m", "prueba B9: commit real sin pie"],
