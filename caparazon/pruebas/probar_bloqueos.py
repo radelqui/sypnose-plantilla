@@ -172,9 +172,11 @@ def main() -> None:
         dir_capa = tmp / "caparazon"
         shutil.copytree(FUENTE, dir_capa, ignore=shutil.ignore_patterns("__pycache__", "estado", "cola", "config.json"))
         shutil.copy2(AQUI.parent.parent / "precios.yaml", dir_capa / "precios.yaml")
+        subprocess.run(["git", "init", "-q", str(tmp / "wt-plantilla")], capture_output=True, check=True)
         (dir_capa / "config.json").write_text(json.dumps({
             "carpeta": carpeta.name, "carpeta_ruta": str(carpeta), "worktree": str(carpeta / "wt"), "coleccion": "coforge-santander",
             "kb_proyecto": "coforge-santander", "prefijo_planes": "PLAN-CS-", "plan_id": None, "verificador": "07-verificador",
+            "worktrees_extra": [{"ruta": str(tmp / "wt-plantilla"), "permitidos": ["specs/T01/**"]}],
             "ssh": {"bin": str(tmp / "sin-ssh" / "ssh.exe"), "destino": "sypnose@62.171.147.46", "puerto": 2024,
                     "clave": "~/.ssh/id_ed25519_radelqui", "db": "/home/sypnose/sypnose-f1/registry.db"}}, ensure_ascii=False), encoding="utf-8")
         env.update(SYPNOSE_REGISTRO_URL=url, SYPNOSE_KB_URL=url, SYPNOSE_REGISTRO_ESCRITURA=f"sqlite:{db}", SYPNOSE_MODO="prueba")
@@ -225,6 +227,42 @@ def main() -> None:
     caso("B3.4 PreToolUse (control): Edit en archivo permitido", dir_capa, "pre_tool_use.py",
          {**pre, "tool_name": "Edit", "tool_input": {"file_path": permitido, "old_string": "a", "new_string": "b"}}, env,
          (lambda rc, o, e: rc == 0) if abierto else abortado)
+    # Las tres formas de ruta de una shell (lead, 15-sep): POSIX de Git Bash (/c/…), ~ y relativa. El mensaje lleva la ruta real.
+    posix_de = lambda ruta: "/" + ruta[0].lower() + ruta[2:].replace("\\", "/")
+    en_mensaje = lambda ruta: os.path.normcase(os.path.realpath(ruta))
+    caso("B3.5 PreToolUse: ruta POSIX de Git Bash (/c/…) a la centinela → bloqueada con su ruta real", dir_capa, "pre_tool_use.py",
+         {**pre, "tool_name": "Bash", "tool_input": {"command": f'echo x > "{posix_de(centinela)}"'}}, env,
+         (lambda rc, o, e: rc == 2 and "CERCO" in e and en_mensaje(centinela) in e) if abierto else abortado)
+    caso("B3.6 PreToolUse: ruta con ~ → bloqueada con la ruta del home, no como si estuviera dentro del worktree", dir_capa, "pre_tool_use.py",
+         {**pre, "tool_name": "Bash", "tool_input": {"command": "echo x > ~/_centinela_fuera.txt"}}, env,
+         (lambda rc, o, e: rc == 2 and en_mensaje(os.path.join(os.path.expanduser("~"), "_centinela_fuera.txt")) in e and "fuera del worktree" in e)
+         if abierto else abortado)
+    caso("B3.7 PreToolUse: ruta relativa ../ a la centinela → bloqueada con su ruta real", dir_capa, "pre_tool_use.py",
+         {**pre, "tool_name": "Bash", "tool_input": {"command": "cp app/main.py ../_centinela_fuera.txt"}}, env,
+         (lambda rc, o, e: rc == 2 and en_mensaje(centinela) in e) if abierto else abortado)
+    caso("B3.8 PreToolUse (control): ruta POSIX dentro del worktree y permitida → pasa", dir_capa, "pre_tool_use.py",
+         {**pre, "tool_name": "Bash", "tool_input": {"command": f'echo x > "{posix_de(permitido)}"'}}, env,
+         (lambda rc, o, e: rc == 0) if abierto else abortado)
+    if args.modo == "local":
+        # worktrees_extra (lead, 15-sep): el chat escribe su spec en su worktree del repo plantilla (D5) con sus propios permitidos.
+        wt_extra = str(tmp / "wt-plantilla")
+        caso("B3.9 PreToolUse: Write en el worktree extra dentro de specs/T01/** → pasa", dir_capa, "pre_tool_use.py",
+             {**pre, "tool_name": "Write", "tool_input": {"file_path": os.path.join(wt_extra, "specs", "T01", "spec.md"), "content": "x"}}, env,
+             lambda rc, o, e: rc == 0)
+        caso("B3.10 PreToolUse: Write en el worktree extra fuera de specs/T01/** → bloqueada", dir_capa, "pre_tool_use.py",
+             {**pre, "tool_name": "Write", "tool_input": {"file_path": os.path.join(wt_extra, "README.md"), "content": "x"}}, env,
+             lambda rc, o, e: rc == 2 and "fuera de archivos_permitidos" in e and "worktree extra" in e)
+        caso("B3.11 PreToolUse: git -C en el worktree extra → pasa", dir_capa, "pre_tool_use.py",
+             {**pre, "tool_name": "Bash", "tool_input": {"command": f'git -C "{wt_extra}" add specs/T01/spec.md'}}, env,
+             lambda rc, o, e: rc == 0)
+        caso("B3.12 PreToolUse: git -C en el repo plantilla compartido, que no es worktree extra (caso real de 02) → bloqueada", dir_capa,
+             "pre_tool_use.py", {**pre, "tool_name": "Bash", "tool_input": {"command": 'git -C "C:\\MICD\\Coforge Santander\\plantilla" worktree list'}},
+             env, lambda rc, o, e: rc == 2 and "CERCO" in e and "list está fuera" not in e)
+        caso("B3.13 PreToolUse (control): git worktree list y git log en el worktree no escriben nada → pasa", dir_capa, "pre_tool_use.py",
+             {**pre, "tool_name": "Bash", "tool_input": {"command": "git worktree list && git log --oneline -3"}}, env, lambda rc, o, e: rc == 0)
+        caso("B3.14 PreToolUse: git worktree add con -b pone el worktree en la ruta, no en la rama → la ruta de fuera se bloquea", dir_capa,
+             "pre_tool_use.py", {**pre, "tool_name": "Bash", "tool_input": {"command": "git worktree add -b nueva ../otro-wt main"}}, env,
+             lambda rc, o, e: rc == 2 and en_mensaje(os.path.join(Path(wt).parent, "otro-wt")) in e)
     post = {**base, "hook_event_name": "PostToolUse", "tool_use_id": "toolu_prueba", "prompt_id": "prompt-prueba"}
     caso("B4.1 PostToolUse: evento a la cola local, sin tocar el registro", dir_capa, "post_tool_use.py",
          {**post, "tool_name": "Write", "tool_input": {"file_path": permitido, "content": "..."},
@@ -642,6 +680,20 @@ def main() -> None:
              lambda rc, o, e: rc == 0,
              despues=lambda: comprobar(f"evidencia: {ultima_evidencia()[:200]!r}",
                                        "(la salida no trae línea de resumen)" in ultima_evidencia() and puntos in ultima_evidencia()))
+
+        # Auditoría git también en el worktree extra (lead, 15-sep): lo que un Bash deje fuera de sus permitidos se bloquea después.
+        sid_x = f"{sid}-extra"
+        estado_x = lambda: json.loads((dir_capa / "estado" / f"{sid_x}.json").read_text(encoding="utf-8"))
+        caso("B4.10 UserPromptSubmit de una sesión nueva: su estado guarda cómo estaba el worktree extra al empezar", dir_capa, "prompt_submit.py",
+             {**base, "session_id": sid_x, "hook_event_name": "UserPromptSubmit", "prompt": "sigue"}, env, lambda rc, o, e: rc == 0,
+             despues=lambda: comprobar(f"sucios_inicio_extra={estado_x().get('sucios_inicio_extra')}", wt_extra in estado_x().get("sucios_inicio_extra", {})))
+        (Path(wt_extra) / "specs" / "T01").mkdir(parents=True, exist_ok=True)
+        (Path(wt_extra) / "specs" / "T01" / "spec.md").write_text("R1\n", encoding="utf-8")
+        (Path(wt_extra) / "README.md").write_text("fuera\n", encoding="utf-8")
+        caso("B4.11 PostToolUse: la auditoría git del worktree extra bloquea README.md (fuera de specs/T01/**) y deja specs/T01/spec.md",
+             dir_capa, "post_tool_use.py", {**post, "session_id": sid_x, "tool_name": "Bash", "tool_input": {"command": f'cd "{wt_extra}" && ./genera.sh'},
+                                             "tool_response": {"stdout": "", "stderr": "", "interrupted": False, "isImage": False}}, env,
+             lambda rc, o, e: rc == 2 and "auditoría git" in e and "README.md" in e and "spec.md" not in e)
 
         # Barrera de escritura en vivo (lead, tras el incidente del 15-sep 12:34Z): en vivo solo con SYPNOSE_MODO=real, el marcador INSTALADO
         # junto a los módulos instalados y la sesión en la carpeta o en su worktree. ssh.bin apunta a un ejecutable que no existe: si la
