@@ -243,6 +243,9 @@ def _git_heading_exists(repo: Path, sha: str, path: str, section: str) -> bool:
 
 
 def _gh_run_success(run_id: str) -> bool:
+    """A run is success if conclusion=success, OR if status=waiting with
+    jobs 'test' and 'build-and-push' concluded success and job 'deploy'
+    in waiting (human approval gate). Any other state is not success."""
     try:
         r = subprocess.run(
             ["gh", "api", f"repos/{GH_REPO}/actions/runs/{run_id}",
@@ -257,7 +260,22 @@ def _gh_run_success(run_id: str) -> bool:
         status = data.get("status", "")
         if conclusion == "success":
             return True
-        if status == "waiting" or conclusion == "action_required":
+        if status != "waiting":
+            return False
+        # status=waiting: verify individual jobs
+        rj = subprocess.run(
+            ["gh", "api", f"repos/{GH_REPO}/actions/runs/{run_id}/jobs",
+             "--jq", '[.jobs[] | {name: .name, conclusion: (.conclusion // "none"), status: .status}]'],
+            capture_output=True, text=True, timeout=30,
+        )
+        if rj.returncode != 0:
+            return False
+        jobs = _json.loads(rj.stdout.strip())
+        job_map = {j["name"]: j for j in jobs}
+        test_ok = job_map.get("test", {}).get("conclusion") == "success"
+        build_ok = job_map.get("build-and-push", {}).get("conclusion") == "success"
+        deploy_waiting = job_map.get("deploy", {}).get("status") == "waiting"
+        if test_ok and build_ok and deploy_waiting:
             return True
         return False
     except Exception:
@@ -299,24 +317,28 @@ def validar_fuente(fuente: str, conn=None, plan_id: str | None = None) -> tuple[
             return False, f"unratified 07-verificador actor(s): {', '.join(unknown_actors)}"
         return False, "no evidencia_07 event from a ratified actor 07"
 
-    # evento:<id> → event must exist and actor must be a ratified 07
+    # evento:<id> → only for lineas_de_proceso; must be accion='verificado',
+    # detalle contains CUMPLE (not NO CUMPLE), same plan, actor 07 ratified
     m = RE_EVENTO.match(fuente)
     if m:
         evento_id = int(m.group(1))
         if not conn:
             return False, "needs DB connection"
         row = conn.execute(
-            "SELECT actor FROM evento WHERE rowid=?", (evento_id,)
+            "SELECT actor, accion, plan_id, detalle FROM evento WHERE rowid=?", (evento_id,)
         ).fetchone()
         if not row:
             return False, f"evento {evento_id} not found"
-        actor = row[0]
+        actor, accion, ev_plan, detalle = row
+        if accion != "verificado":
+            return False, f"evento {evento_id} accion={accion}, expected verificado"
+        if not detalle or "CUMPLE" not in detalle or "NO CUMPLE" in detalle:
+            return False, f"evento {evento_id} detalle not CUMPLE"
+        if plan_id and ev_plan and ev_plan != plan_id:
+            return False, f"evento {evento_id} plan={ev_plan}, expected {plan_id}"
         if actor.startswith("IA:07-verificador:") and actor07_valido(actor, conn):
             return True, "ok"
-        if actor.startswith("H:"):
-            if conn.execute("SELECT 1 FROM actor WHERE id=? AND clase='humano'", (actor,)).fetchone():
-                return True, "ok"
-        return False, f"evento {evento_id} actor {actor} not ratified"
+        return False, f"evento {evento_id} actor {actor} not ratified 07"
 
     # git:commit:<sha> → commit must exist in rag-banking-agent
     m = RE_GIT_COMMIT.match(fuente)
