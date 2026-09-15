@@ -307,26 +307,33 @@ def validar_fuente(fuente: str, conn=None, plan_id: str | None = None) -> tuple[
 def calcular_certeza(conn, plan_id: str) -> tuple[str, list[str]]:
     """Calculate certeza from evidence sources. Returns (certeza, reasons)."""
     filas = conn.execute(
-        "SELECT fuente, dice FROM evidencia WHERE plan_id=? "
-        "AND fuente NOT LIKE 'bloqueo:%' AND fuente NOT LIKE 'INVALIDA:%'",
+        "SELECT rowid, fuente, dice FROM evidencia WHERE plan_id=? "
+        "AND fuente NOT LIKE 'bloqueo:%' AND fuente NOT LIKE 'INVALIDA:%' "
+        "AND fuente NOT LIKE 'entrega:%'",
         (plan_id,),
     ).fetchall()
 
-    invalidas = {
-        row[0].replace("INVALIDA:", "", 1)
-        for row in conn.execute(
-            "SELECT fuente FROM evidencia WHERE plan_id=? AND fuente LIKE 'INVALIDA:%'",
-            (plan_id,),
-        ).fetchall()
-    }
-    filas = [(f, d) for f, d in filas if f not in invalidas]
+    invalidas_fuente = set()
+    invalidas_rowid = set()
+    for row in conn.execute(
+        "SELECT fuente FROM evidencia WHERE plan_id=? AND fuente LIKE 'INVALIDA:%'",
+        (plan_id,),
+    ).fetchall():
+        target = row[0].replace("INVALIDA:", "", 1)
+        m_rowid = re.match(r"^rowid:(\d+)$", target)
+        if m_rowid:
+            invalidas_rowid.add(int(m_rowid.group(1)))
+        else:
+            invalidas_fuente.add(target)
+    filas = [(rid, f, d) for rid, f, d in filas
+             if f not in invalidas_fuente and rid not in invalidas_rowid]
 
     if not filas:
         return "propuesto", ["0 filas de evidencia real"]
 
     razones = []
     alguna_falla = False
-    for fuente, dice in filas:
+    for _rid, fuente, dice in filas:
         if re.search(r"\bPARCIAL\b", dice, re.IGNORECASE):
             alguna_falla = True
             razones.append(f"dice contiene PARCIAL: {fuente}")
