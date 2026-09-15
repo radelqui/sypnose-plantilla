@@ -1,6 +1,7 @@
-"""TRASPASO-4 A4: firma humana y nombre público como afirmaciones.
+"""TRASPASO-4 A4: firma humana, firma de tareas y nombre público.
 
     python3 firmar.py firma   --db DB --nodo sol:coforge:rag-banking-agent --actor H:carlos
+    python3 firmar.py tarea   --db DB --plan PLAN-CS-T01 --ids 9 33 48 --actor H:carlos --detalle "texto"
     python3 firmar.py nombre  --db DB --actor H:carlos --nombre "Carlos (Lead)"
     python3 firmar.py nombre  --db DB --actor IA:02-backend-api:claude-sonnet-5 --nombre "Agente backend"
     python3 firmar.py listar  --db DB
@@ -148,6 +149,57 @@ def cmd_nombre(args):
     print(f"[OK] {args.actor} → nombre_publico = '{args.nombre}'")
 
 
+def cmd_tarea(args):
+    """Firma (espera_firma → hecha) una o más tareas con actor humano (D4)."""
+    verificar_repo_limpio()
+    conn, db_path = conectar(args.db)
+
+    actor = conn.execute("SELECT id, clase FROM actor WHERE id=?", (args.actor,)).fetchone()
+    if not actor:
+        sys.exit(f"[FALLO] actor {args.actor} no existe")
+    if actor[1] != "humano":
+        sys.exit(f"[FALLO] solo humanos pueden firmar tareas (D4); {args.actor} es {actor[1]}")
+
+    tareas = []
+    for tid in args.ids:
+        row = conn.execute(
+            "SELECT id, plan_id, req_ref, titulo, progreso, agente, verificada_por "
+            "FROM tarea WHERE id=? AND plan_id=?",
+            (tid, args.plan),
+        ).fetchone()
+        if not row:
+            sys.exit(f"[FALLO] tarea {tid} no existe en {args.plan}")
+        t_id, t_plan, t_ref, t_titulo, t_prog, t_agente, t_verif = row
+        if t_prog != "espera_firma":
+            sys.exit(f"[FALLO] tarea {tid} progreso={t_prog}, esperado espera_firma")
+        if not t_verif:
+            sys.exit(f"[FALLO] tarea {tid} sin verificada_por (D7)")
+        if t_verif == t_agente:
+            sys.exit(f"[FALLO] tarea {tid} verificada_por={t_verif} == agente (D7: quien ejecuta no juzga)")
+        tareas.append((t_id, t_ref, t_titulo, t_verif))
+        print(f"[validada] tarea {t_id} ({t_ref}): {t_titulo} — verificada por {t_verif}")
+
+    b = backup(conn, db_path)
+    print(f"[backup] {b}")
+
+    ts = ahora()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for t_id, t_ref, t_titulo, t_verif in tareas:
+            conn.execute("UPDATE tarea SET progreso='hecha' WHERE id=?", (t_id,))
+            conn.execute(
+                "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+                (ts, args.actor, "firma_tarea", args.plan,
+                 f"tarea {t_id} ({t_ref}): {t_titulo} — {args.detalle}"),
+            )
+            print(f"[firmada] tarea {t_id} → hecha")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    print(f"[OK] {len(tareas)} tareas firmadas por {args.actor}")
+
+
 def cmd_listar(args):
     conn, _ = conectar(args.db)
     firmas = conn.execute(
@@ -174,6 +226,13 @@ def main():
     p_firma.add_argument("--actor", required=True, help="actor humano (H:carlos)")
     p_firma.add_argument("--force", action="store_true", help="versionar firma existente")
 
+    p_tarea = sub.add_parser("tarea")
+    p_tarea.add_argument("--db", required=True)
+    p_tarea.add_argument("--plan", required=True, help="plan_id, ej. PLAN-CS-T01")
+    p_tarea.add_argument("--ids", nargs="+", type=int, required=True, help="ids de tareas a firmar")
+    p_tarea.add_argument("--actor", required=True, help="actor humano (H:carlos)")
+    p_tarea.add_argument("--detalle", required=True, help="texto de detalle para el evento")
+
     p_nombre = sub.add_parser("nombre")
     p_nombre.add_argument("--db", required=True)
     p_nombre.add_argument("--actor", required=True, help="actor (IA:02-backend-api:... o H:carlos)")
@@ -183,7 +242,7 @@ def main():
     p_list.add_argument("--db", required=True)
 
     args = ap.parse_args()
-    {"firma": cmd_firma, "nombre": cmd_nombre, "listar": cmd_listar}[args.cmd](args)
+    {"firma": cmd_firma, "tarea": cmd_tarea, "nombre": cmd_nombre, "listar": cmd_listar}[args.cmd](args)
 
 
 if __name__ == "__main__":
