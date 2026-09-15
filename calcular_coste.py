@@ -15,9 +15,13 @@ from pathlib import Path
 
 import yaml
 
+from barrera import PRECIOS_PATH, verificar_repo_limpio
 
-def cargar_precios(ruta: Path) -> dict:
-    d = yaml.safe_load(ruta.read_text(encoding="utf-8"))
+
+def cargar_precios() -> dict:
+    if not PRECIOS_PATH.exists():
+        sys.exit(f"[FALLO] no encuentro {PRECIOS_PATH}")
+    d = yaml.safe_load(PRECIOS_PATH.read_text(encoding="utf-8"))
     return d["modelos"]
 
 
@@ -66,21 +70,17 @@ def calcular_usd(totales: dict, precios: dict) -> float:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--transcript", required=True, help="ruta al JSONL del transcript")
-    ap.add_argument("--precios", default=None, help="ruta a precios.yaml (default: mismo directorio)")
     ap.add_argument("--db", default=None, help="ruta a registry.db (omitir para solo resumen)")
     ap.add_argument("--plan", default=None, help="plan_id de la tarea (ej. PLAN-CS-T01)")
     ap.add_argument("--req", default="R1", help="ref del requisito")
     ap.add_argument("--resumen", action="store_true", help="solo imprime resumen, no escribe BD")
     args = ap.parse_args()
 
-    transcript = Path(args.transcript)
-    precios_path = Path(args.precios) if args.precios else transcript.parent / "precios.yaml"
-    if not precios_path.exists():
-        precios_path = Path(__file__).parent / "precios.yaml"
-    if not precios_path.exists():
-        sys.exit(f"[FALLO] no encuentro precios.yaml en {precios_path}")
+    if args.db and not args.resumen:
+        verificar_repo_limpio()
 
-    precios = cargar_precios(precios_path)
+    transcript = Path(args.transcript)
+    precios = cargar_precios()
     totales = sumar_tokens(transcript)
 
     if not totales:

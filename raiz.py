@@ -1,4 +1,4 @@
-"""TRASPASO-4 A2 (D3 v4): operaciones sobre raíces linea_oferta.
+"""TRASPASO-4 A2 (D3 v6): operaciones sobre raíces linea_oferta.
 
     python3 raiz.py add     --db DB
     python3 raiz.py edit    --db DB --id T01 [--alcance]
@@ -6,31 +6,27 @@
     python3 raiz.py listar  --db DB
     python3 raiz.py sync    --db DB [--registrar-hash]
 
-D3 v4: plantilla/ es su propio repo git. La oferta canónica es UNA ruta fija
-(oferta-coforge.txt junto a este script). No existe --oferta.
-El fichero debe estar commiteado (git -C plantilla status limpio).
-Dos afirmaciones canónicas en el nodo plantilla:
-  - oferta_hash: SHA-256 truncado a 16 hex del contenido
-  - oferta_commit: git rev-parse HEAD del repo plantilla
-edit/add/sync comparan AMBOS antes de escribir. Si difieren → exit ≠0.
-sync --registrar-hash actualiza ambas (solo si git status limpio).
+Barrera compartida (barrera.py): cada fichero canónico tracked + sin cambios.
+oferta_commit = último commit que tocó oferta-coforge.txt (no HEAD).
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import sqlite3
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from barrera import (
+    NODO_PLANTILLA, OFERTA_PATH,
+    hash_fichero, obtener_commit_oferta,
+    verificar_oferta_canonica, verificar_repo_limpio,
+)
+
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-5"
 FUENTE = "plantilla/raiz.py"
-NODO_PLANTILLA = "plantilla:microservicio-ia"
 COLECCION = "plantilla-microservicio-ia"
 SOL_ID = "sol:coforge:rag-banking-agent"
-OFERTA_PATH = Path(__file__).resolve().parent / "oferta-coforge.txt"
 
 
 def ahora() -> str:
@@ -67,87 +63,20 @@ def evento(conn, actor, accion, detalle, nodo_id=None, plan_id=None):
     )
 
 
-def hash_oferta(texto: str) -> str:
-    return hashlib.sha256(texto.encode()).hexdigest()[:16]
-
-
-PLANTILLA_DIR = OFERTA_PATH.parent
-
-
-def verificar_git_limpio() -> None:
-    """Aborta si el repo plantilla tiene cualquier cambio sin commit (tracked files)."""
-    try:
-        r = subprocess.run(
-            ["git", "-C", str(PLANTILLA_DIR), "diff", "--quiet", "HEAD"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except FileNotFoundError:
-        sys.exit("[FALLO] git no encontrado; plantilla/ debe ser su propio repo git")
-    except subprocess.TimeoutExpired:
-        sys.exit("[FALLO] git diff timeout")
-    if r.returncode != 0:
-        cambios = subprocess.run(
-            ["git", "-C", str(PLANTILLA_DIR), "diff", "--name-only", "HEAD"],
-            capture_output=True, text=True, timeout=10,
-        )
-        sys.exit(f"[FALLO] repo plantilla tiene cambios sin commit:\n{cambios.stdout.strip()}\n"
-                 f"Haz 'git add + git commit' antes de ejecutar raiz.py.")
-    staged = subprocess.run(
-        ["git", "-C", str(PLANTILLA_DIR), "diff", "--cached", "--quiet"],
-        capture_output=True, text=True, timeout=10,
-    )
-    if staged.returncode != 0:
-        sys.exit("[FALLO] repo plantilla tiene cambios staged sin commit. Haz 'git commit' primero.")
-
-
-def obtener_commit_head() -> str:
-    """Devuelve el SHA del HEAD del repo plantilla."""
-    r = subprocess.run(
-        ["git", "-C", str(PLANTILLA_DIR), "rev-parse", "HEAD"],
-        capture_output=True, text=True, timeout=10,
-    )
-    if r.returncode != 0:
-        sys.exit(f"[FALLO] git rev-parse HEAD falló: {r.stderr.strip()}")
-    return r.stdout.strip()
-
-
-def verificar_hash_canonico(conn: sqlite3.Connection, h: str) -> None:
-    reg_hash = conn.execute(
-        "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo='oferta_hash' AND vigente=1",
-        (NODO_PLANTILLA,),
-    ).fetchone()
-    if not reg_hash:
-        sys.exit("[FALLO] no hay oferta_hash registrado. Ejecuta 'sync --registrar-hash' primero.")
-    if reg_hash[0] != h:
-        sys.exit(f"[FALLO] hash del fichero ({h}) no coincide con el canónico ({reg_hash[0]}). "
-                 f"Si el cambio es intencional, haz commit y ejecuta 'sync --registrar-hash'.")
-
-    commit_actual = obtener_commit_head()
-    reg_commit = conn.execute(
-        "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo='oferta_commit' AND vigente=1",
-        (NODO_PLANTILLA,),
-    ).fetchone()
-    if not reg_commit:
-        sys.exit("[FALLO] no hay oferta_commit registrado. Ejecuta 'sync --registrar-hash' primero.")
-    if reg_commit[0] != commit_actual:
-        sys.exit(f"[FALLO] commit HEAD ({commit_actual[:12]}) no coincide con el registrado ({reg_commit[0][:12]}). "
-                 f"Si el cambio es intencional, haz commit y ejecuta 'sync --registrar-hash'.")
-
-
 def cargar_oferta() -> tuple[list[dict], str]:
     sys.path.insert(0, str(Path(__file__).parent))
     from parser_oferta import extraer_lineas
     if not OFERTA_PATH.exists():
         sys.exit(f"[FALLO] no existe {OFERTA_PATH}")
     texto = OFERTA_PATH.read_text(encoding="utf-8")
-    return extraer_lineas(texto), hash_oferta(texto)
+    return extraer_lineas(texto), hash_fichero(texto)
 
 
 def cmd_add(args):
-    verificar_git_limpio()
+    verificar_repo_limpio()
     lineas_parser, h = cargar_oferta()
     conn, db_path = conectar(args.db, args.actor)
-    verificar_hash_canonico(conn, h)
+    verificar_oferta_canonica(conn, h)
 
     existentes = conn.execute(
         "SELECT id FROM nodo WHERE tipo='linea_oferta' AND id LIKE 'linea:coforge:%' ORDER BY id"
@@ -192,14 +121,14 @@ def cmd_add(args):
 
 
 def cmd_edit(args):
-    verificar_git_limpio()
+    verificar_repo_limpio()
     lineas_parser, h = cargar_oferta()
     linea_parser = next((l for l in lineas_parser if l["id"] == args.id), None)
     if not linea_parser:
         sys.exit(f"[FALLO] {args.id} no existe en el parser (oferta-coforge.txt). Edita primero el fichero fuente.")
 
     conn, db_path = conectar(args.db, args.actor)
-    verificar_hash_canonico(conn, h)
+    verificar_oferta_canonica(conn, h)
 
     nid = nodo_id(args.id)
     actual = conn.execute("SELECT nombre, vitalidad FROM nodo WHERE id=?", (nid,)).fetchone()
@@ -354,7 +283,7 @@ def cmd_listar(args):
 
 def cmd_sync(args):
     """Compara oferta-coforge.txt (ruta fija) con nodos en BD. Exit ≠0 si hay discrepancias."""
-    verificar_git_limpio()
+    verificar_repo_limpio()
     sys.path.insert(0, str(Path(__file__).parent))
     from parser_oferta import extraer_lineas
 
@@ -362,14 +291,14 @@ def cmd_sync(args):
         sys.exit(f"[FALLO] no existe {OFERTA_PATH}")
     texto = OFERTA_PATH.read_text(encoding="utf-8")
     lineas = extraer_lineas(texto)
-    h = hash_oferta(texto)
+    h = hash_fichero(texto)
 
     conn, db_path = conectar(args.db, args.actor)
 
-    commit_head = obtener_commit_head()
+    commit_oferta = obtener_commit_oferta()
 
     if args.registrar_hash:
-        for campo, valor_nuevo in [("oferta_hash", h), ("oferta_commit", commit_head)]:
+        for campo, valor_nuevo in [("oferta_hash", h), ("oferta_commit", commit_oferta)]:
             registrado = conn.execute(
                 "SELECT id, valor FROM afirmacion WHERE nodo_id=? AND campo=? AND vigente=1",
                 (NODO_PLANTILLA, campo),
@@ -392,10 +321,10 @@ def cmd_sync(args):
         if old:
             conn.execute("UPDATE afirmacion SET vigente=0 WHERE id=?", (old[0],))
         evento(conn, ACTOR, "oferta_canonizada",
-               f"oferta_hash={h}, oferta_commit={commit_head[:12]}",
+               f"oferta_hash={h}, oferta_commit={commit_oferta[:12]}",
                nodo_id=NODO_PLANTILLA)
     else:
-        verificar_hash_canonico(conn, h)
+        verificar_oferta_canonica(conn, h)
 
     rows = conn.execute(
         "SELECT id, nombre FROM nodo WHERE tipo='linea_oferta' AND vitalidad!='inactivo_por_diseno' ORDER BY id"

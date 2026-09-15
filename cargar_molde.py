@@ -17,6 +17,8 @@ from pathlib import Path
 
 import yaml
 
+from barrera import OFERTA_YAML, verificar_repo_limpio
+
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-5"
 CLASES = {"investigar", "migrar", "mantener", "retirar"}
 FUENTE = "plantilla/oferta.yaml"
@@ -97,13 +99,14 @@ class Carga:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
-    ap.add_argument("--oferta", required=True)
     ap.add_argument("--actor", default=ACTOR)
     ap.add_argument("--dry-run", action="store_true", help="ejecuta todo en una transacción y la deshace")
     args = ap.parse_args()
 
+    verificar_repo_limpio()
+
     db_path = Path(args.db).expanduser()
-    oferta = cargar_oferta(Path(args.oferta))
+    oferta = cargar_oferta(OFERTA_YAML)
     slug = oferta["plantilla"]
     coleccion = f"plantilla-{slug}"
     nodo = f"plantilla:{slug}"

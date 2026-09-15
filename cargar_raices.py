@@ -17,6 +17,8 @@ from pathlib import Path
 
 from parser_oferta import extraer_lineas
 
+from barrera import OFERTA_PATH, verificar_repo_limpio
+
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-5"
 FUENTE = "plantilla/cargar_raices.py"
 COLECCION = "plantilla-microservicio-ia"
@@ -47,14 +49,17 @@ def similitud(a: str, b: str) -> float:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
-    ap.add_argument("--txt", required=True, help="fichero de texto crudo de la oferta")
     ap.add_argument("--actor", default=ACTOR)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--umbral", type=float, default=0.85, help="umbral de similitud para emparejar PLAN-T con línea")
     args = ap.parse_args()
 
+    verificar_repo_limpio()
+
     db_path = Path(args.db).expanduser()
-    texto = Path(args.txt).read_text(encoding="utf-8")
+    if not OFERTA_PATH.exists():
+        sys.exit(f"[FALLO] no existe {OFERTA_PATH}")
+    texto = OFERTA_PATH.read_text(encoding="utf-8")
     lineas = extraer_lineas(texto)
     if not lineas:
         sys.exit("[FALLO] no se encontraron líneas en el texto crudo")

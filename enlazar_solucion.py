@@ -10,6 +10,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from barrera import verificar_repo_limpio
+
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-5"
 FUENTE = "plantilla/enlazar_solucion.py"
 COLECCION = "plantilla-microservicio-ia"
@@ -69,6 +71,8 @@ def main() -> None:
     ap.add_argument("--actor", default=ACTOR)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+
+    verificar_repo_limpio()
 
     db_path = Path(args.db).expanduser()
     conn = sqlite3.connect(db_path, isolation_level=None)

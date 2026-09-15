@@ -1,0 +1,91 @@
+"""Barrera de integridad compartida para scripts que escriben en el registro SYPNOSE.
+
+Todo script que modifique el registro debe llamar a verificar_repo_limpio() antes
+de escribir. La función comprueba que cada fichero canónico (CANONICOS) esté
+rastreado en git y sin cambios (working tree + staged).
+
+Para scripts que leen la oferta: verificar_oferta_canonica() compara hash y commit.
+oferta_commit = último commit que tocó oferta-coforge.txt (no HEAD), así un commit
+de scripts no obliga a re-registrar.
+
+Decisión lead 15-sep-2026. Corrección 07-verificador: oferta.yaml modificable sin commit.
+"""
+from __future__ import annotations
+
+import hashlib
+import subprocess
+import sys
+from pathlib import Path
+
+PLANTILLA_DIR = Path(__file__).resolve().parent
+NODO_PLANTILLA = "plantilla:microservicio-ia"
+
+CANONICOS = ["oferta-coforge.txt", "oferta.yaml", "precios.yaml"]
+
+OFERTA_PATH = PLANTILLA_DIR / "oferta-coforge.txt"
+OFERTA_YAML = PLANTILLA_DIR / "oferta.yaml"
+PRECIOS_PATH = PLANTILLA_DIR / "precios.yaml"
+
+
+def verificar_repo_limpio() -> None:
+    for f in CANONICOS:
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(PLANTILLA_DIR), "ls-files", "--error-unmatch", f],
+                capture_output=True, text=True, timeout=10,
+            )
+        except FileNotFoundError:
+            sys.exit("[FALLO] git no encontrado; plantilla/ debe ser su propio repo git")
+        except subprocess.TimeoutExpired:
+            sys.exit(f"[FALLO] git timeout comprobando {f}")
+        if r.returncode != 0:
+            sys.exit(f"[FALLO] {f} no está rastreado en el repo plantilla. Haz git add + commit.")
+
+        r = subprocess.run(
+            ["git", "-C", str(PLANTILLA_DIR), "diff", "--quiet", "HEAD", "--", f],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0:
+            sys.exit(f"[FALLO] {f} tiene cambios sin commit. Haz git add + commit primero.")
+
+        r = subprocess.run(
+            ["git", "-C", str(PLANTILLA_DIR), "diff", "--cached", "--quiet", "--", f],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0:
+            sys.exit(f"[FALLO] {f} tiene cambios staged sin commit. Haz git commit primero.")
+
+
+def hash_fichero(texto: str) -> str:
+    return hashlib.sha256(texto.encode()).hexdigest()[:16]
+
+
+def obtener_commit_oferta() -> str:
+    r = subprocess.run(
+        ["git", "-C", str(PLANTILLA_DIR), "log", "-1", "--format=%H", "--", "oferta-coforge.txt"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        sys.exit("[FALLO] no se encontró commit para oferta-coforge.txt en el repo plantilla")
+    return r.stdout.strip()
+
+
+def verificar_oferta_canonica(conn, h: str) -> None:
+    reg_hash = conn.execute(
+        "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo='oferta_hash' AND vigente=1",
+        (NODO_PLANTILLA,),
+    ).fetchone()
+    if not reg_hash:
+        sys.exit("[FALLO] no hay oferta_hash registrado. Ejecuta 'raiz.py sync --registrar-hash'.")
+    if reg_hash[0] != h:
+        sys.exit(f"[FALLO] hash ({h}) ≠ canónico ({reg_hash[0]}). Commit + sync --registrar-hash.")
+
+    commit = obtener_commit_oferta()
+    reg_commit = conn.execute(
+        "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo='oferta_commit' AND vigente=1",
+        (NODO_PLANTILLA,),
+    ).fetchone()
+    if not reg_commit:
+        sys.exit("[FALLO] no hay oferta_commit registrado. Ejecuta 'raiz.py sync --registrar-hash'.")
+    if reg_commit[0] != commit:
+        sys.exit(f"[FALLO] commit oferta ({commit[:12]}) ≠ registrado ({reg_commit[0][:12]}). sync --registrar-hash.")

@@ -13,6 +13,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from barrera import verificar_repo_limpio
+
 FUENTE = "plantilla/firmar.py"
 
 
@@ -38,6 +40,7 @@ def conectar(db_str: str) -> tuple[sqlite3.Connection, Path]:
 
 
 def cmd_firma(args):
+    verificar_repo_limpio()
     conn, db_path = conectar(args.db)
     actor = conn.execute("SELECT id, clase FROM actor WHERE id=?", (args.actor,)).fetchone()
     if not actor:
@@ -81,6 +84,7 @@ def cmd_firma(args):
 
 
 def cmd_nombre(args):
+    verificar_repo_limpio()
     conn, db_path = conectar(args.db)
     if not conn.execute("SELECT 1 FROM actor WHERE id=?", (args.actor,)).fetchone():
         sys.exit(f"[FALLO] actor {args.actor} no existe")

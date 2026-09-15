@@ -19,6 +19,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent if Path(__file__).resolve().parent.name == "historico" else Path(__file__).resolve().parent))
+from barrera import verificar_repo_limpio
+
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-5"
 FUENTE = "plantilla/corregir_d1d2.py"
 SOL_ID = "sol:coforge:rag-banking-agent"
@@ -67,10 +70,16 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
+    verificar_repo_limpio()
+
     db_path = Path(args.db).expanduser()
     conn = sqlite3.connect(db_path, isolation_level=None)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 8000")
+
+    ya = conn.execute("SELECT 1 FROM evento WHERE actor=? AND accion='plan_rechazado' AND plan_id='PLAN-T-01' LIMIT 1", (ACTOR,)).fetchone()
+    if ya:
+        sys.exit("[INFO] corregir_d1d2 ya fue aplicado (evento plan_rechazado PLAN-T-01 existe). Nada que hacer.")
 
     if not args.dry_run:
         b = backup(conn, db_path)

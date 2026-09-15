@@ -1,14 +1,7 @@
-"""TRASPASO-4 D2 v3: instanciar el molde para un nuevo proyecto.
+"""TRASPASO-4 D2 v3 (D3 v6): instanciar el molde para un nuevo proyecto.
 
-El molde (plantilla-microservicio-ia) tiene 15 raíces linea_oferta y NADA más (sin requisitos).
-Instanciar crea: colección, nodo solución (sin cubre: queda "vacío"),
-15 planes PLAN-<SIGLA>-T01..15 en propuesto con R0 bootstrap + tarea.
-
-Roles: se leen de oferta.yaml sección roles_por_linea. Si una línea no tiene rol → ABORTA.
-Oferta: ruta fija (oferta-coforge.txt junto a este script). No existe --oferta.
-Git status limpio + oferta_hash + oferta_commit verificados antes de escribir.
-R0 lifecycle: 07-verificador pone tarea en espera_firma cuando comprobación R0 dé ≥1;
-              la tarea pasa a hecha SOLO con firma de Carlos (D4: solo humanos → declarado).
+Barrera compartida (barrera.py): cada fichero canónico tracked + sin cambios.
+oferta_commit = último commit que tocó oferta-coforge.txt (no HEAD).
 
     python3 instanciar.py --db ~/sypnose-f1/registry.db --slug bedrock-agent --sigla BA
     python3 instanciar.py --db ~/sypnose-f1/registry.db --slug bedrock-agent --sigla BA --dry-run
@@ -16,22 +9,21 @@ R0 lifecycle: 07-verificador pone tarea en espera_firma cuando comprobación R0 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import sqlite3
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
 
+from barrera import (
+    NODO_PLANTILLA, OFERTA_PATH, OFERTA_YAML,
+    hash_fichero, verificar_oferta_canonica, verificar_repo_limpio,
+)
+
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-5"
 FUENTE = "plantilla/instanciar.py"
 COLECCION_MOLDE = "plantilla-microservicio-ia"
-NODO_PLANTILLA = "plantilla:microservicio-ia"
-OFERTA_PATH = Path(__file__).resolve().parent / "oferta-coforge.txt"
-OFERTA_YAML = Path(__file__).resolve().parent / "oferta.yaml"
-PLANTILLA_DIR = OFERTA_PATH.parent
 
 
 def cargar_roles() -> dict[str, tuple[str, str]]:
@@ -46,66 +38,6 @@ def cargar_roles() -> dict[str, tuple[str, str]]:
 
 def ahora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-
-def hash_oferta(texto: str) -> str:
-    return hashlib.sha256(texto.encode()).hexdigest()[:16]
-
-
-def verificar_git_limpio() -> None:
-    try:
-        r = subprocess.run(
-            ["git", "-C", str(PLANTILLA_DIR), "diff", "--quiet", "HEAD"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except FileNotFoundError:
-        sys.exit("[FALLO] git no encontrado; plantilla/ debe ser su propio repo git")
-    except subprocess.TimeoutExpired:
-        sys.exit("[FALLO] git diff timeout")
-    if r.returncode != 0:
-        cambios = subprocess.run(
-            ["git", "-C", str(PLANTILLA_DIR), "diff", "--name-only", "HEAD"],
-            capture_output=True, text=True, timeout=10,
-        )
-        sys.exit(f"[FALLO] repo plantilla tiene cambios sin commit:\n{cambios.stdout.strip()}\n"
-                 f"Haz 'git add + git commit' antes de ejecutar instanciar.py.")
-    staged = subprocess.run(
-        ["git", "-C", str(PLANTILLA_DIR), "diff", "--cached", "--quiet"],
-        capture_output=True, text=True, timeout=10,
-    )
-    if staged.returncode != 0:
-        sys.exit("[FALLO] repo plantilla tiene cambios staged sin commit. Haz 'git commit' primero.")
-
-
-def obtener_commit_head() -> str:
-    r = subprocess.run(
-        ["git", "-C", str(PLANTILLA_DIR), "rev-parse", "HEAD"],
-        capture_output=True, text=True, timeout=10,
-    )
-    if r.returncode != 0:
-        sys.exit(f"[FALLO] git rev-parse HEAD falló: {r.stderr.strip()}")
-    return r.stdout.strip()
-
-
-def verificar_oferta_canonica(conn: sqlite3.Connection, h: str) -> None:
-    reg_hash = conn.execute(
-        "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo='oferta_hash' AND vigente=1",
-        (NODO_PLANTILLA,),
-    ).fetchone()
-    if not reg_hash:
-        sys.exit("[FALLO] no hay oferta_hash registrado. Ejecuta 'raiz.py sync --registrar-hash' primero.")
-    if reg_hash[0] != h:
-        sys.exit(f"[FALLO] hash del fichero ({h}) no coincide con el canónico ({reg_hash[0]}).")
-
-    commit_actual = obtener_commit_head()
-    reg_commit = conn.execute(
-        "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo='oferta_commit' AND vigente=1",
-        (NODO_PLANTILLA,),
-    ).fetchone()
-    if not reg_commit:
-        sys.exit("[FALLO] no hay oferta_commit registrado. Ejecuta 'raiz.py sync --registrar-hash' primero.")
-    if reg_commit[0] != commit_actual:
-        sys.exit(f"[FALLO] commit HEAD ({commit_actual[:12]}) no coincide con el registrado ({reg_commit[0][:12]}).")
 
 
 def backup(conn: sqlite3.Connection, db_path: Path) -> Path:
@@ -132,7 +64,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    verificar_git_limpio()
+    verificar_repo_limpio()
 
     sys.path.insert(0, str(Path(__file__).parent))
     from parser_oferta import extraer_lineas
@@ -143,7 +75,7 @@ def main():
     lineas = extraer_lineas(texto)
     if not lineas:
         sys.exit("[FALLO] el parser no extrajo ninguna línea")
-    h = hash_oferta(texto)
+    h = hash_fichero(texto)
 
     roles = cargar_roles()
     sin_rol = [l["id"] for l in lineas if l["id"] not in roles]
