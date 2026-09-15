@@ -219,16 +219,13 @@ def validar_fuente(fuente: str, conn=None) -> tuple[bool, str]:
             return True, "ok"
         return False, f"plan {plan_id} not found in DB"
 
-    # 07-verificador/VERIFICACION.md#section → heading must exist in file
+    # 07-verificador/FILE#section → file must exist (section is 07's internal label, not a heading)
     m = RE_VERIFICADOR.match(fuente)
     if m:
         filepath = PROYECTO_DIR / "07-verificador" / m.group(1)
-        section = m.group(2)
-        if not filepath.exists():
-            return False, f"file {filepath.name} not found"
-        if _file_heading_exists(filepath, section):
+        if filepath.exists():
             return True, "ok"
-        return False, f"heading #{section} not found in {filepath.name}"
+        return False, f"file {filepath.name} not found"
 
     # 07-verificador/FILE (bare, no #section) → file must exist
     m = RE_VERIFICADOR_BARE.match(fuente)
