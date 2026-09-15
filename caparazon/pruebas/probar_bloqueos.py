@@ -844,6 +844,68 @@ def main() -> None:
              lambda rc, o, e: rc == 0 and "Requisito vigente de la tarea 52" in o and "la tarea 33 está entregada y pendiente de juicio" in o
              and "tarea 52 · R1 · trabajando · entregada: no" in o)
 
+        # B14 (lead, 15-sep): un chat con VARIOS planes abiertos — brief lista todos, Plan: + Tarea: en ENTREGA selecciona,
+        # los permitidos son la unión. Segundo plan con su requisito y tareas del mismo agente.
+        with sqlite3.connect(db) as c:
+            c.execute("INSERT INTO plan (id, clase, que, para, porque, afecta, estado, autor, dueno, worktree, abierto_en) VALUES "
+                      "('PLAN-CS-T03', 'mantener', 'RAG pipeline', 'Retrieval-augmented generation', 'requisito del banco', "
+                      "'02-backend-api', 'abierto', 'IA:05-arquitecto-sypnose:claude-opus-5', 'H:carlos', "
+                      "'prueba-local/PLAN-CS-T03', '2026-09-15T00:00:00.000Z')")
+            c.execute("INSERT INTO requisito VALUES ('PLAN-CS-T03', 'R3', 'Cuando el pipeline RAG reciba una consulta DEBE devolver respuesta con fuentes.', "
+                      "'pytest tests/test_rag.py -q')")
+            c.execute("INSERT INTO tarea (id, plan_id, req_ref, titulo, progreso, agente) VALUES "
+                      "(60, 'PLAN-CS-T03', 'R3', 'Pipeline RAG básico', 'trabajando', 'IA:02-backend-api:claude-sonnet-5')")
+            c.execute("INSERT INTO tarea (id, plan_id, req_ref, titulo, progreso, agente) VALUES "
+                      "(61, 'PLAN-CS-T03', 'R3', 'Fuentes en respuesta', 'pendiente', 'IA:02-backend-api:claude-sonnet-5')")
+        sid_14 = f"{sid}-b14"
+        base_14, post_14 = {**base, "session_id": sid_14}, {**post, "session_id": sid_14}
+        caso("B6.28 SessionStart con dos planes: el brief lista tareas de ambos planes", dir_capa, "brief.py",
+             {**base_14, "hook_event_name": "SessionStart", "source": "startup", "model": "claude-sonnet-5"}, env,
+             lambda rc, o, e: rc == 0 and "PLAN-CS-T01" in o and "PLAN-CS-T03" in o and "tarea 60" in o
+             and "Plan: <id>" in o)
+        caso("B6.28b UserPromptSubmit con dos planes: el aviso del prompt lista tareas de ambos", dir_capa, "prompt_submit.py",
+             {**base_14, "hook_event_name": "UserPromptSubmit", "prompt": "sigue"}, env,
+             lambda rc, o, e: rc == 0 and "PLAN-CS-T03" in o and "tarea 60" in o)
+        # Preparar la sesión B14 con una escritura y una ejecución para poder entregar
+        for script_14, entrada_14 in [
+            ("post_tool_use.py", {**post_14, "tool_name": "Write", "tool_input": {"file_path": permitido, "content": "x"}, "tool_response": {"filePath": permitido}}),
+            ("post_tool_use.py", {**post_14, "tool_name": "Bash", "tool_input": {"command": "pytest tests/test_rag.py -q"},
+                                  "tool_response": {"stdout": verde_b12, "stderr": "", "interrupted": False, "isImage": False}}),
+            ("post_tool_use.py", {**post_14, "tool_name": "mcp__ccd_session_mgmt__send_message",
+                                  "tool_input": {"session_id": "sesion-07", "message": "ENTREGA"}, "tool_response": {"ok": True}}),
+        ]:
+            subprocess.run([sys.executable, str(dir_capa / script_14)], input=json.dumps(entrada_14, ensure_ascii=False).encode("utf-8"),
+                           capture_output=True, env={**os.environ, **env}, timeout=240)
+        entrega_t03 = f"ENTREGA\nPlan: PLAN-CS-T03\nTarea: 60\nComprobación: pytest tests/test_rag.py -q\nSalida: 15 passed in 1.04s\nLECCIÓN: prueba B14"
+        caso("B6.29 Stop: ENTREGA con 'Plan: PLAN-CS-T03' y 'Tarea: 60' entrega tarea de otro plan", dir_capa, "stop.py",
+             {**stop, "session_id": sid_14, "last_assistant_message": entrega_t03}, env,
+             lambda rc, o, e: rc == 0 and "ENTREGA registrada en SYPNOSE" in o,
+             despues=lambda: comprobar(f"última tarea_entregada: {detalles('tarea_entregada')[-1][:60]}",
+                                       "tarea 60" in detalles("tarea_entregada")[-1]))
+        entrega_inv = f"ENTREGA\nPlan: PLAN-INEXISTENTE\nTarea: 60\nComprobación: pytest tests/test_rag.py -q\nSalida: 15 passed in 1.04s\nLECCIÓN: prueba"
+        caso("B6.29b Stop: ENTREGA con 'Plan: PLAN-INEXISTENTE' → rechazada (plan no trabajable)", dir_capa, "stop.py",
+             {**stop, "session_id": sid_14, "last_assistant_message": entrega_inv}, env,
+             lambda rc, o, e: rc == 2 and "PLAN-INEXISTENTE" in e and "no es un plan" in e)
+        # commit_msg: Plan: PLAN-CS-T03 es válido con planes_trabajables
+        msg_14 = tmp / "msg-b14.txt"
+        msg_14.write_text("B14 test commit\n\nChat: 02-backend-api\nModel: claude-sonnet-5\nPlan: PLAN-CS-T03\nTarea: 60\n"
+                          "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n", encoding="utf-8")
+        caso("B6.29c commit-msg acepta Plan: PLAN-CS-T03 (planes_trabajables incluye T03)", dir_capa, "commit_msg.py",
+             None, env, lambda rc, o, e: rc == 0, args=(str(msg_14),))
+        msg_14_bad = tmp / "msg-b14-bad.txt"
+        msg_14_bad.write_text("B14 test commit\n\nChat: 02-backend-api\nModel: claude-sonnet-5\nPlan: PLAN-FALSO\nTarea: 60\n"
+                              "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n", encoding="utf-8")
+        caso("B6.29d commit-msg rechaza Plan: PLAN-FALSO (no está en planes_trabajables)", dir_capa, "commit_msg.py",
+             None, env, lambda rc, o, e: rc == 1 and "PLAN-FALSO" in e, args=(str(msg_14_bad),))
+        # Limpieza: eliminar plan T03 para no afectar los tests de barrera
+        with sqlite3.connect(db) as c:
+            c.execute("DELETE FROM tarea WHERE plan_id='PLAN-CS-T03'")
+            c.execute("DELETE FROM requisito WHERE plan_id='PLAN-CS-T03'")
+            c.execute("DELETE FROM plan WHERE id='PLAN-CS-T03'")
+        for s14 in (sid_14,):
+            for f14 in [dir_capa / "estado" / f"{s14}.json", dir_capa / "cola" / f"{s14}.jsonl", dir_capa / "cola" / f"{s14}.estado.json"]:
+                f14.unlink(missing_ok=True)
+
         # Barrera de escritura en vivo (lead, tras el incidente del 15-sep 12:34Z): en vivo solo con SYPNOSE_MODO=real, el marcador INSTALADO
         # junto a los módulos instalados y la sesión en la carpeta o en su worktree. ssh.bin apunta a un ejecutable que no existe: si la
         # barrera se abre, el envío falla en el PC ("SSH al registro falló") y nada sale a la red.
