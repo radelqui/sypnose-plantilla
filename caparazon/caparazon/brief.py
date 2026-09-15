@@ -100,6 +100,16 @@ def devolucion(detalle: dict, tarea: dict) -> str:
     return "Motivo de la devolución: no aparece en los últimos eventos del plan."
 
 
+def forma_sql(comprobacion: str, cfg: dict) -> str:
+    """Una comprobación SQL solo cuenta ejecutada contra la base del registro por ssh: se enseña la forma exacta."""
+    consulta = re.split(r"\s*(?:→|->)\s*", comprobacion, maxsplit=1)[0].strip()
+    if not re.match(r"(?is)^(select|with)\b", consulta):
+        return ""
+    s = cfg["ssh"]
+    return (f"Ejecución de la comprobación (única forma que cuenta): ssh -i {s['clave']} -p {s['puerto']} {s['destino']} "
+            f"\"sqlite3 {s['db']} \\\"{consulta}\\\"\"")
+
+
 def _gh(worktree: str, *args: str):
     p = subprocess.run(["gh", *args], cwd=worktree, capture_output=True, text=True, encoding="utf-8", errors="replace",
                        timeout=20, creationflags=cerco.SIN_VENTANA)
@@ -239,6 +249,7 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
         motivo_devolucion,
         f"Requisito {req['ref']} (EARS literal): {req['ears']}",
         f"Comprobación: {req['comprobacion']}",
+        forma_sql(req["comprobacion"], cfg),
         f"Worktree local: {cfg['worktree']}",
         f"Archivos permitidos ({fuente_permitidos}): {', '.join(permitidos)}",
         f"Presupuesto: {presupuesto}",
