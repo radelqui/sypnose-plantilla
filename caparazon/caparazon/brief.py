@@ -231,9 +231,11 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
         tarea={k: tarea.get(k) for k in ("id", "req_ref", "titulo", "progreso", "agente")},
     )
     cuando = comun.ahora()
+    # Sin SessionStart (sesión abierta antes de instalar el caparazón) el estado lo crea otro hook, que no trae 'source'.
+    origen = entrada.get("source") or f"sin SessionStart: estado creado por {entrada.get('hook_event_name') or 'un hook sin nombre'}"
     ops = [
         comun.op_evento(estado["actor"], "sesion_iniciada",
-                        f"{entrada.get('source', '?')} · modelo {modelo} ({fuente_modelo}) · tarea {tarea['id']} {req['ref']} · worktree {cfg['worktree']}",
+                        f"{origen} · modelo {modelo} ({fuente_modelo}) · tarea {tarea['id']} {req['ref']} · worktree {cfg['worktree']}",
                         p["id"], cuando),
         {"op": "tarea_progreso", "tarea_id": tarea["id"], "progreso": "trabajando", "desde": ["pendiente", "devuelta"],
          "evento": comun.op_evento(estado["actor"], "tarea_trabajando", f"tarea {tarea['id']} {tarea['progreso']} → trabajando", p["id"], cuando)},
@@ -288,6 +290,7 @@ def main() -> None:
         aviso = f"Caparazón: {estado['plan']['id']} · tarea {estado['tarea']['id']} · cerco {', '.join(estado['permitidos'])}"
     if estado.get("nota_cola"):
         aviso += f"\n{estado['nota_cola']}"
+    comun.actualizar_estado(estado["session_id"], lambda e: e.update(brief_entregado=comun.ahora(), brief_via="SessionStart"))
     comun.salir_json({"systemMessage": aviso, "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": estado["brief"]}})
 
 
