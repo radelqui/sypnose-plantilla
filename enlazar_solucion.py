@@ -219,13 +219,20 @@ def validar_fuente(fuente: str, conn=None) -> tuple[bool, str]:
             return True, "ok"
         return False, f"plan {plan_id} not found in DB"
 
-    # 07-verificador/FILE#section → file must exist (section is 07's internal label, not a heading)
+    # 07-verificador/FILE#label → file must exist and contain literal "#label"
     m = RE_VERIFICADOR.match(fuente)
     if m:
         filepath = PROYECTO_DIR / "07-verificador" / m.group(1)
-        if filepath.exists():
+        label = m.group(2)
+        if not filepath.exists():
+            return False, f"file {filepath.name} not found"
+        try:
+            text = filepath.read_text(encoding="utf-8")
+        except Exception:
+            return False, f"cannot read {filepath.name}"
+        if f"#{label}" in text:
             return True, "ok"
-        return False, f"file {filepath.name} not found"
+        return False, f"label #{label} not found in {filepath.name}"
 
     # 07-verificador/FILE (bare, no #section) → file must exist
     m = RE_VERIFICADOR_BARE.match(fuente)
