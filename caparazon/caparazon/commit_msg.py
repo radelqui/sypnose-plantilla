@@ -10,7 +10,7 @@ import sys
 import comun
 
 CAMPOS = ("Chat", "Model", "Plan", "Tarea")
-TRAILER = re.compile(r"^[A-Za-z][A-Za-z0-9-]*:[ \t]*\S")
+TRAILER = re.compile(r"^(?:Chat|Model|Plan|Tarea|(?i:co-authored-by|signed-off-by)):[ \t]*\S")
 
 
 def parrafos(lineas: list[str]) -> list[list[str]]:
@@ -73,6 +73,10 @@ def main() -> None:
         if not campos.get(k):
             fallos.append(f"'{k}:' tiene que ir en el último párrafo, junto a Co-Authored-By y sin línea en blanco" if k in fuera_de_sitio
                           else f"falta '{k}:' al pie")
+    for k in CAMPOS:
+        veces = sum(1 for linea in resto[1:] + bloque if re.match(rf"^{k}:", linea))
+        if veces > 1:
+            fallos.append(f"'{k}:' aparece {veces} veces; tiene que aparecer una sola vez")
     if campos.get("Chat") and campos["Chat"] != cfg["carpeta"]:
         fallos.append(f"Chat: debe ser {cfg['carpeta']} (llegó '{campos['Chat']}')")
     if campos.get("Model") and not re.fullmatch(r"claude-[a-z0-9.-]+", campos["Model"]):
