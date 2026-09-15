@@ -1,8 +1,10 @@
 """B8: instala el caparazón SYPNOSE en una carpeta de chat (hooks, commit-msg, .mcp.json, settings.json, sección de CLAUDE.md).
 
-    python instalar_caparazon.py <carpeta> [--worktree <ruta>] [--prefijo-planes PLAN-CS-] [--plan-id PLAN-CS-T01]
+    python instalar_caparazon.py <carpeta> [--modo prueba|real] [--worktree <ruta>] [--prefijo-planes PLAN-CS-] [--plan-id PLAN-CS-T01]
     python instalar_caparazon.py <carpeta> --desinstalar
 
+Escribe el marcador INSTALADO junto a los módulos y SYPNOSE_MODO en .claude/settings.json. Las sesiones de la carpeta solo escriben en
+vivo en el registro y la KB con --modo real; con --modo prueba (por defecto) los eventos se quedan en la cola local con aviso.
 Idempotente: reinstalar deja los mismos ficheros. Desinstalar retira solo lo que puso el caparazón y conserva estado y pendientes.
 """
 from __future__ import annotations
@@ -24,6 +26,7 @@ MODULOS = ["comun.py", "cerco.py", "brief.py", "prompt_submit.py", "pre_tool_use
 PRECIOS = RAIZ.parent / "precios.yaml"
 SERVIDORES = ("sypnose", "knowledge-hub", "github")
 MARCA_INI, MARCA_FIN = "<!-- caparazon:inicio -->", "<!-- caparazon:fin -->"
+MARCADOR = "INSTALADO"
 
 
 def posix(ruta: Path | str) -> str:
@@ -116,11 +119,13 @@ def instalar(args, carpeta: Path, wt: Path) -> None:
     }
     if escribir_json(dir_capa / "config.json", config):
         print("  config.json")
+    if escribir_json(dir_capa / MARCADOR, {"carpeta_ruta": str(carpeta), "worktree": str(wt), "instalador": posix(Path(__file__).resolve())}):
+        print(f"  {MARCADOR} (marcador de instalación: sin él los hooks no escriben en vivo)")
     githook = f'#!/bin/sh\nexec "{posix(sys.executable)}" "{posix(dir_capa / "commit_msg.py")}" "$1"\n'
     if escribir(dir_capa / "githooks" / "commit-msg", githook):
         print("  githooks/commit-msg")
 
-    variables = {"PYTHON": sys.executable, "CAPARAZON": posix(dir_capa), "PYTHON_POSIX": posix(sys.executable),
+    variables = {"PYTHON": sys.executable, "CAPARAZON": posix(dir_capa), "PYTHON_POSIX": posix(sys.executable), "MODO": args.modo,
                  "CAPARAZON_POSIX": posix(dir_capa), "SSH": ssh_bin, "SSH_CLAVE": str(Path(args.ssh_clave).expanduser()),
                  "SSH_PUERTO": str(args.ssh_puerto), "SSH_DESTINO": args.ssh_destino, "CARPETA": carpeta.name,
                  "WORKTREE": str(wt), "TUNEL": f"ssh -N -i {args.ssh_clave} -p {args.ssh_puerto} -L 7101:127.0.0.1:7101 "
@@ -145,8 +150,13 @@ def instalar(args, carpeta: Path, wt: Path) -> None:
         if s not in habilitados:
             habilitados.append(s)
             manifiesto.setdefault("servidores_habilitados", []).append(s)
+    entorno, env_previos = settings.setdefault("env", {}), manifiesto.setdefault("env_previos", {})
+    for clave, valor in nuevo["env"].items():
+        if clave not in env_previos:
+            env_previos[clave] = entorno.get(clave)
+        entorno[clave] = valor
     if escribir_json(settings_p, settings):
-        print("  .claude/settings.json (hooks, permisos, servidores MCP)")
+        print(f"  .claude/settings.json (hooks, permisos, servidores MCP, SYPNOSE_MODO={args.modo})")
 
     mcp_p = carpeta / ".mcp.json"
     respaldar_original(mcp_p, sello, manifiesto)
@@ -178,7 +188,8 @@ def instalar(args, carpeta: Path, wt: Path) -> None:
         print(f"  git: core.hooksPath (solo este worktree) = {posix(dir_capa / 'githooks')}")
     manifiesto.setdefault("instalado_en", sello)
     escribir_json(manifiesto_p, manifiesto)
-    print("[caparazón] instalado. Abre el chat en la carpeta: SessionStart imprimirá el brief.")
+    print(f"[caparazón] instalado en modo {args.modo}. Abre el chat en la carpeta: SessionStart imprimirá el brief."
+          + ("" if args.modo == "real" else " En modo prueba los eventos se quedan en la cola local; para escribir en vivo, reinstala con --modo real."))
 
 
 def desinstalar(carpeta: Path, wt: Path) -> None:
@@ -204,6 +215,14 @@ def desinstalar(carpeta: Path, wt: Path) -> None:
         settings["enabledMcpjsonServers"] = servidores
     else:
         settings.pop("enabledMcpjsonServers", None)
+    entorno = settings.get("env", {})
+    for clave, previo in manifiesto.get("env_previos", {}).items():
+        if previo is None:
+            entorno.pop(clave, None)
+        else:
+            entorno[clave] = previo
+    if not entorno:
+        settings.pop("env", None)
     if not settings and manifiesto.get("respaldos", {}).get("settings.json", "") is None:
         settings_p.unlink(missing_ok=True)
         print("  .claude/settings.json retirado (no existía antes)")
@@ -229,6 +248,8 @@ def desinstalar(carpeta: Path, wt: Path) -> None:
         print("  CLAUDE.md sin sección caparazón")
     git(wt, "config", "--worktree", "--unset", "core.hooksPath", check=False)
     print("  git: core.hooksPath del worktree retirado")
+    (dir_capa / MARCADOR).unlink(missing_ok=True)
+    print(f"  {MARCADOR} retirado: los módulos que se conservan ya no escriben en vivo")
     destino = dir_claude / f"caparazon-desinstalado-{datetime.now():%Y%m%d-%H%M%S}"
     dir_capa.rename(destino)
     print(f"  módulos, estado y pendientes conservados en {destino.name}")
@@ -239,6 +260,8 @@ def main() -> None:
     ap.add_argument("carpeta")
     ap.add_argument("--worktree", help="worktree git del chat (por defecto <carpeta>/wt)")
     ap.add_argument("--desinstalar", action="store_true")
+    ap.add_argument("--modo", choices=("prueba", "real"), default="prueba",
+                    help="real: las sesiones de la carpeta escriben en vivo en el registro y la KB (SYPNOSE_MODO=real)")
     ap.add_argument("--prefijo-planes", default="PLAN-CS-")
     ap.add_argument("--plan-id", default=None)
     ap.add_argument("--coleccion", default="coforge-santander")
