@@ -22,6 +22,8 @@ CODIGO_EN_LINEA = {"python", "python3", "py", "node", "perl", "ruby", "pwsh", "p
 PISTAS_ESCRITURA = re.compile(r"open\(|write|unlink|remove|rmtree|mkdir|rename|replace\(|copy|move|Set-Content|Out-File|New-Item|appendFile", re.I)
 RUTA_EN_CODIGO = re.compile(r"""['"]((?:[A-Za-z]:[\\/]|/|\.\.[\\/]|~[\\/])[^'"]+)['"]""")
 GIT_C = "\x00git-C:"  # objetivo de `git -C <dir>`: opera en ese repositorio; los ficheros que cambie los revisa la auditoría git
+SSH_REMOTO = "\x00ssh-git-remoto:"  # B15: git de escritura por SSH → bloqueado
+SSH_OPTS_CON_ARG = set("bBcDEeFIiJLlmOopQRSwW")
 
 
 def norm(ruta: str, base: str) -> str:
@@ -73,6 +75,8 @@ def veredicto(ruta: str, cwd: str, worktree: str, permitidos: list[str], extra_p
     cambie los revisa la auditoría git."""
     if ruta.strip().lower() in INOCUOS:
         return None
+    if ruta.startswith(SSH_REMOTO):
+        return f"git de escritura por SSH bloqueado: {ruta[len(SSH_REMOTO):]}"
     es_git_c = ruta.startswith(GIT_C)
     r = norm(ruta[len(GIT_C):] if es_git_c else ruta, cwd)
     for extra in extra_permitidos:
@@ -218,6 +222,50 @@ def _segmentos(comando: str) -> list[list[str]]:
     return segmentos
 
 
+def _comando_remoto_ssh(args: list[str]) -> str:
+    """B15: extrae el comando remoto de los argumentos de ssh (todo lo que va después de [user@]host)."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            i += 1
+            break
+        if a.startswith("-") and len(a) == 2 and a[1] in SSH_OPTS_CON_ARG:
+            i += 2
+            continue
+        if a.startswith("-"):
+            i += 1
+            continue
+        i += 1
+        break
+    return " ".join(args[i:])
+
+
+def _objetivos_ssh(args: list[str]) -> list[str]:
+    """B15: si el comando remoto SSH contiene git de escritura, emite un marcador SSH_REMOTO que el cerco rechazará."""
+    remoto = _comando_remoto_ssh(args)
+    if not remoto:
+        return []
+    try:
+        for seg in _segmentos(remoto):
+            resto = [t for t in seg if t not in SEPARADORES and t not in REDIRECCIONES]
+            while resto and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", resto[0]):
+                resto.pop(0)
+            while resto and resto[0] in ("sudo", "env", "nohup", "cd", "time", "command"):
+                if resto[0] == "cd" and len(resto) > 1:
+                    resto = resto[2:]
+                else:
+                    resto.pop(0)
+            if not resto:
+                continue
+            orden_r = re.sub(r"\.exe$", "", os.path.basename(resto[0]).lower())
+            if orden_r == "git" and not _git_consulta(resto[1:]):
+                return [SSH_REMOTO + remoto[:200]]
+    except (ComandoIlegible, ValueError):
+        return [SSH_REMOTO + remoto[:200]]
+    return []
+
+
 def _segmento(seg: list[str], cwd: str, profundidad: int) -> tuple[list[str], str]:
     objetivos, limpio, i = [], [], 0
     while i < len(seg):
@@ -268,6 +316,8 @@ def _segmento(seg: list[str], cwd: str, profundidad: int) -> tuple[list[str], st
             objetivos.append(posic[2])
         elif posic[:2] == ["worktree", "add"] and len(posic) >= 3:
             objetivos.append(posic[2])
+    elif orden == "ssh" and profundidad < 3:
+        objetivos += _objetivos_ssh(args)
     elif orden in SHELLS_ANIDADAS and "-c" in args and profundidad < 3:
         idx = args.index("-c")
         if idx + 1 < len(args):
@@ -305,7 +355,8 @@ def objetivos_shell(comando: str, cwd: str, profundidad: int = 0) -> list[str]:
         nuevos, cwd = _segmento(seg, cwd, profundidad)
         # norm() entiende /c/… de Git Bash, ~ y rutas relativas al cwd de ese punto del comando. Con os.path.join, en Python 3.13
         # (os.path.isabs('/c/…') es False) /c/MICD/… acababa en C:\c\MICD\… y ~/x quedaba dentro del worktree.
-        objetivos += [n if n.strip().lower() in INOCUOS else GIT_C + norm(n[len(GIT_C):], cwd) if n.startswith(GIT_C) else norm(n, cwd)
+        objetivos += [n if n.strip().lower() in INOCUOS or n.startswith(SSH_REMOTO)
+                      else GIT_C + norm(n[len(GIT_C):], cwd) if n.startswith(GIT_C) else norm(n, cwd)
                       for n in nuevos]
     return objetivos
 
@@ -376,6 +427,14 @@ def _segmento_lectura(seg: list[str]) -> bool:
         return True
     orden, args = re.sub(r"\.exe$", "", os.path.basename(resto[0]).lower()), resto[1:]
     posic = [a for a in args if not a.startswith("-")]
+    if orden == "ssh":
+        remoto = _comando_remoto_ssh(args)
+        if not remoto:
+            return True
+        try:
+            return all(_segmento_lectura(s) for s in _segmentos(remoto))
+        except (ComandoIlegible, ValueError):
+            return False
     if orden not in ORDENES_LECTURA:
         return False
     if orden == "find":
