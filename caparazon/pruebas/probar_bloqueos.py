@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -88,22 +89,53 @@ def simulador(db: Path) -> str:
     return f"http://127.0.0.1:{servidor.server_address[1]}"
 
 
-def caso(nombre: str, dir_capa: Path, script: str, entrada: dict | None, env: dict, esperado, args: tuple = ()) -> tuple[int, str, str]:
+class Registro:
+    """Consultas de comprobación: sqlite directo en modo local; lote de solo lectura por SSH en modo real."""
+
+    def __init__(self, db: Path | None, dir_capa: Path, actor: str, desde: str):
+        self.db, self.dir_capa, self.actor, self.desde = db, dir_capa, actor, desde
+
+    def filas(self, sql: str, params=()) -> list:
+        if self.db:
+            with sqlite3.connect(self.db) as c:
+                return c.execute(sql, params).fetchall()
+        sys.path.insert(0, str(self.dir_capa))
+        import comun
+        return comun.escribir(comun.config(), [{"op": "consulta", "sql": sql, "params": list(params)}])["resultados"][0]["filas"]
+
+    def cuenta(self, accion: str) -> int:
+        return self.filas("SELECT COUNT(*) FROM evento WHERE actor=? AND accion=? AND cuando>=?", (self.actor, accion, self.desde))[0][0]
+
+    def evidencias(self, fuente: str) -> int:
+        return self.filas("SELECT COUNT(*) FROM evidencia WHERE fuente=? AND dice LIKE ?", (fuente, f"%{self.actor}%"))[0][0]
+
+
+def comprobar(texto: str, ok: bool) -> str:
+    return texto if ok else "FALLA: " + texto
+
+
+def caso(nombre, dir_capa, script, entrada, env, esperado, args=(), despues=None):
+    t = time.monotonic()
     p = subprocess.run([sys.executable, str(dir_capa / script), *args], input=json.dumps(entrada or {}, ensure_ascii=False).encode("utf-8"),
                        capture_output=True, env={**os.environ, **env}, timeout=240)
+    ms = round((time.monotonic() - t) * 1000)
     rc, out, err = p.returncode, p.stdout.decode("utf-8", "replace"), p.stderr.decode("utf-8", "replace")
-    veredicto = "CUMPLE" if esperado(rc, out, err) else "NO CUMPLE"
+    ok = esperado(rc, out, err)
+    extra = despues() if ok and despues else ""
+    ok = ok and not extra.startswith("FALLA")
     print(f"\n── {nombre} ──\nhook: {script} {' '.join(args)}")
     if entrada is not None:
         visible = {k: v for k, v in entrada.items() if k not in ("transcript_path", "permission_mode")}
-        print(f"entrada: {json.dumps(visible, ensure_ascii=False)[:500]}")
-    print(f"exit={rc}")
+        print(f"entrada: {json.dumps(visible, ensure_ascii=False)[:420]}")
+    print(f"exit={rc} · {ms} ms")
     if out.strip():
-        print(f"stdout: {out.strip()[:900]}")
+        print(f"stdout: {out.strip()[:700]}")
     if err.strip():
-        print(f"stderr: {err.strip()[:900]}")
-    print(f"→ {veredicto}")
-    RESULTADOS.append((nombre, veredicto))
+        print(f"stderr: {err.strip()[:700]}")
+    if extra:
+        print(f"comprobado: {extra}")
+    print(f"→ {'CUMPLE' if ok else 'NO CUMPLE'}")
+    RESULTADOS.append((nombre, "CUMPLE" if ok else "NO CUMPLE"))
     return rc, out, err
 
 
@@ -122,16 +154,17 @@ def main() -> None:
     inicio = ahora()
     tmp = Path(tempfile.mkdtemp(prefix="caparazon-b9-"))
     env = {"SYPNOSE_ACTOR": args.actor}
+    db = None
     if args.modo == "local":
         db = tmp / "registro.db"
         with sqlite3.connect(db) as c:
             c.executescript((AQUI / "registro_minimo.sql").read_text(encoding="utf-8"))
         url = simulador(db)
         dir_capa = tmp / "caparazon"
-        shutil.copytree(FUENTE, dir_capa, ignore=shutil.ignore_patterns("__pycache__", "estado", "pendientes*.jsonl", "config.json"))
-        wt = carpeta / "wt"
+        shutil.copytree(FUENTE, dir_capa, ignore=shutil.ignore_patterns("__pycache__", "estado", "cola", "config.json"))
+        shutil.copy2(AQUI.parent.parent / "precios.yaml", dir_capa / "precios.yaml")
         (dir_capa / "config.json").write_text(json.dumps({
-            "carpeta": carpeta.name, "carpeta_ruta": str(carpeta), "worktree": str(wt), "coleccion": "coforge-santander",
+            "carpeta": carpeta.name, "carpeta_ruta": str(carpeta), "worktree": str(carpeta / "wt"), "coleccion": "coforge-santander",
             "kb_proyecto": "coforge-santander", "prefijo_planes": "PLAN-CS-", "plan_id": None, "verificador": "07-verificador",
             "ssh": {"bin": "ssh", "destino": "sin-uso", "puerto": 0, "clave": "sin-uso", "db": "sin-uso"}}, ensure_ascii=False), encoding="utf-8")
         env.update(SYPNOSE_REGISTRO_URL=url, SYPNOSE_KB_URL=url, SYPNOSE_REGISTRO_ESCRITURA=f"sqlite:{db}")
@@ -141,6 +174,7 @@ def main() -> None:
         if not (dir_capa / "config.json").exists():
             sys.exit(f"{carpeta} no tiene el caparazón instalado")
         print(f"[modo real] caparazón {dir_capa} · registro {os.environ.get('SYPNOSE_REGISTRO_URL', 'http://127.0.0.1:7101')} · actor {args.actor}")
+    reg = Registro(db, dir_capa, args.actor, inicio)
     cfg = json.loads((dir_capa / "config.json").read_text(encoding="utf-8"))
     wt = cfg["worktree"]
     transcript = tmp / "transcript.jsonl"
@@ -153,29 +187,43 @@ def main() -> None:
     base = {"session_id": sid, "transcript_path": str(transcript), "cwd": wt, "permission_mode": "default"}
     centinela = str(Path(wt).parent / "_centinela_fuera.txt")
     permitido = str(Path(wt) / "app" / "main.py")
+    cola = lambda s=sid: dir_capa / "cola" / f"{s}.jsonl"
+    en_cola = lambda s=sid: sum(len(json.loads(l)["ops"]) for l in cola(s).read_text(encoding="utf-8").splitlines() if l.strip()) if cola(s).exists() else 0
+    fallo_cola = lambda s=sid: (json.loads((dir_capa / "cola" / f"{s}.estado.json").read_text(encoding="utf-8")).get("fallo")
+                                if (dir_capa / "cola" / f"{s}.estado.json").exists() else None)
 
     _, out, _ = caso("B1 SessionStart: brief desde el registro", dir_capa, "brief.py",
                      {**base, "hook_event_name": "SessionStart", "source": "startup", "model": "claude-sonnet-5"}, env,
-                     lambda rc, o, e: rc == 0 and "BRIEF CAPARAZÓN" in o)
+                     lambda rc, o, e: rc == 0 and "BRIEF CAPARAZÓN" in o,
+                     despues=lambda: comprobar(f"registro sesion_iniciada={reg.cuenta('sesion_iniciada')} bloqueo:brief={reg.cuenta('bloqueo:brief')} · cola={en_cola()}",
+                                               (reg.cuenta("sesion_iniciada") or reg.cuenta("bloqueo:brief")) and en_cola() == 0))
     abierto = "ABORTADO" not in out
-    caso("B2 UserPromptSubmit: reinyecta la EARS literal" if abierto else "B2 UserPromptSubmit: prompt bloqueado por brief ABORTADO",
-         dir_capa, "prompt_submit.py", {**base, "hook_event_name": "UserPromptSubmit", "prompt": "sigue con la tarea"}, env,
-         (lambda rc, o, e: rc == 0 and "texto literal del registro SYPNOSE" in o) if abierto else (lambda rc, o, e: rc == 2 and "ABORTADO" in e))
+    abortado = lambda rc, o, e: rc == 2 and "ABORTADO" in e
+    caso("B2 UserPromptSubmit: reinyecta la EARS literal", dir_capa, "prompt_submit.py",
+         {**base, "hook_event_name": "UserPromptSubmit", "prompt": "sigue con la tarea"}, env,
+         (lambda rc, o, e: rc == 0 and "texto literal del registro SYPNOSE" in o) if abierto else abortado)
     pre = {**base, "hook_event_name": "PreToolUse", "tool_use_id": "toolu_prueba"}
-    bloquea = lambda rc, o, e: rc == 2 and ("CERCO" in e or not abierto)
+    cerco = (lambda rc, o, e: rc == 2 and "CERCO" in e) if abierto else abortado
     caso("B3.1 PreToolUse: Write a la centinela fuera del worktree", dir_capa, "pre_tool_use.py",
-         {**pre, "tool_name": "Write", "tool_input": {"file_path": centinela, "content": "x"}}, env, bloquea)
+         {**pre, "tool_name": "Write", "tool_input": {"file_path": centinela, "content": "x"}}, env, cerco)
     caso("B3.2 PreToolUse: Bash con redirección a la centinela", dir_capa, "pre_tool_use.py",
-         {**pre, "tool_name": "Bash", "tool_input": {"command": "echo x > ../_centinela_fuera.txt"}}, env, bloquea)
+         {**pre, "tool_name": "Bash", "tool_input": {"command": "echo x > ../_centinela_fuera.txt"}}, env, cerco)
     caso("B3.3 PreToolUse: Write dentro del worktree pero fuera de archivos_permitidos", dir_capa, "pre_tool_use.py",
-         {**pre, "tool_name": "Write", "tool_input": {"file_path": str(Path(wt) / "README.md"), "content": "x"}}, env, bloquea)
+         {**pre, "tool_name": "Write", "tool_input": {"file_path": str(Path(wt) / "README.md"), "content": "x"}}, env, cerco)
     caso("B3.4 PreToolUse (control): Edit en archivo permitido", dir_capa, "pre_tool_use.py",
          {**pre, "tool_name": "Edit", "tool_input": {"file_path": permitido, "old_string": "a", "new_string": "b"}}, env,
-         (lambda rc, o, e: rc == 0) if abierto else (lambda rc, o, e: rc == 2 and "ABORTADO" in e))
-    caso("B4 PostToolUse: evento en vivo con tokens del turno", dir_capa, "post_tool_use.py",
-         {**base, "hook_event_name": "PostToolUse", "tool_name": "Write", "tool_input": {"file_path": permitido, "content": "..."},
-          "tool_response": {"filePath": permitido, "type": "update"}, "tool_use_id": "toolu_prueba", "duration_ms": 12, "prompt_id": "prompt-prueba"},
-         env, lambda rc, o, e: rc == 0 and '"continue": false' not in o)
+         (lambda rc, o, e: rc == 0) if abierto else abortado)
+    post = {**base, "hook_event_name": "PostToolUse", "tool_use_id": "toolu_prueba", "prompt_id": "prompt-prueba"}
+    caso("B4.1 PostToolUse: evento a la cola local, sin tocar el registro", dir_capa, "post_tool_use.py",
+         {**post, "tool_name": "Write", "tool_input": {"file_path": permitido, "content": "..."},
+          "tool_response": {"filePath": permitido, "type": "update"}, "duration_ms": 12}, env,
+         lambda rc, o, e: rc == 0 and '"continue": false' not in o, despues=lambda: comprobar(f"operaciones en cola={en_cola()}", en_cola() > 0))
+    caso("B4.2 flush async --si-toca 60: no envía antes de 60 s", dir_capa, "flush.py", {"session_id": sid}, env,
+         lambda rc, o, e: rc == 0, ("--si-toca", "60"), despues=lambda: comprobar(f"operaciones en cola={en_cola()}", en_cola() > 0))
+    caso("B4.3 flush al vencer el plazo: la cola llega al registro", dir_capa, "flush.py", {"session_id": sid}, env,
+         lambda rc, o, e: rc == 0, ("--si-toca", "0"),
+         despues=lambda: comprobar(f"registro herramienta:Write={reg.cuenta('herramienta:Write')} bloqueo:cerco={reg.cuenta('bloqueo:cerco')} · cola={en_cola()}",
+                                   reg.cuenta("herramienta:Write") >= 1 and en_cola() == 0 and (reg.cuenta("bloqueo:cerco") >= 3 or not abierto)))
 
     mensajes = {"sin_pie": "prueba B9: commit sin pie\n",
                 "con_pie": f"prueba B9: commit con pie\n\nChat: {cfg['carpeta']}\nModel: claude-sonnet-5\nPlan: PLAN-CS-T01\nTarea: 9\n"}
@@ -183,84 +231,91 @@ def main() -> None:
         (tmp / f"{nombre}.txt").write_text(texto, encoding="utf-8")
     caso("B5.1 commit-msg: mensaje sin pie Chat/Model/Plan/Tarea", dir_capa, "commit_msg.py", None, env,
          lambda rc, o, e: rc == 1 and "COMMIT RECHAZADO" in e, (str(tmp / "sin_pie.txt"),))
-    caso("B5.2 commit-msg (control): mensaje con pie completo", dir_capa, "commit_msg.py", None, env,
-         (lambda rc, o, e: rc == 0) if abierto else (lambda rc, o, e: rc in (0, 1)), (str(tmp / "con_pie.txt"),))
+    caso("B5.2 commit-msg (control): mensaje con pie completo", dir_capa, "commit_msg.py", None, env, lambda rc, o, e: rc == 0,
+         (str(tmp / "con_pie.txt"),))
     if args.modo == "real":
         cabeza = subprocess.run(["git", "-C", wt, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
         p = subprocess.run(["git", "-C", wt, "commit", "--allow-empty", "-m", "prueba B9: commit real sin pie"],
-                           capture_output=True, text=True, env={**os.environ, **env})
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", env={**os.environ, **env})
         despues = subprocess.run(["git", "-C", wt, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
         ok = p.returncode != 0 and cabeza == despues
         print(f"\n── B5.3 git commit real sin pie en el worktree ──\n$ git -C {wt} commit --allow-empty -m \"prueba B9: commit real sin pie\"\n"
-              f"exit={p.returncode}\nstderr: {p.stderr.strip()[:700]}\nHEAD antes {cabeza[:10]} · después {despues[:10]}\n→ {'CUMPLE' if ok else 'NO CUMPLE'}")
+              f"exit={p.returncode}\nstderr: {p.stderr.strip()[:600]}\nHEAD antes {cabeza[:10]} · después {despues[:10]}\n→ {'CUMPLE' if ok else 'NO CUMPLE'}")
         RESULTADOS.append(("B5.3 git commit real sin pie", "CUMPLE" if ok else "NO CUMPLE"))
 
     stop = {**base, "hook_event_name": "Stop", "stop_hook_active": False}
+    comprobacion = "pytest tests/test_main.py tests/test_engine_mode.py -q"
     if abierto:
         caso("B6.1 Stop: cierre con escrituras y sin ENTREGA", dir_capa, "stop.py",
-             {**stop, "last_assistant_message": "He terminado los cambios en app/main.py."}, env, lambda rc, o, e: rc == 2 and "CIERRE IMPEDIDO" in e)
+             {**stop, "last_assistant_message": "He terminado los cambios en app/main.py."}, env, lambda rc, o, e: rc == 2 and "CIERRE IMPEDIDO" in e,
+             despues=lambda: comprobar(f"registro bloqueo:entrega={reg.cuenta('bloqueo:entrega')} bloqueo:commit-msg={reg.cuenta('bloqueo:commit-msg')} · cola={en_cola()}",
+                                       reg.cuenta("bloqueo:entrega") >= 1 and reg.cuenta("bloqueo:commit-msg") >= 1 and en_cola() == 0))
     else:
         no_aplica("B6.1 Stop: cierre con escrituras y sin ENTREGA", "el plan no está abierto; la sesión está ABORTADA y no tiene escrituras que entregar")
     if args.modo == "local":
-        comprobacion = "pytest tests/test_main.py tests/test_engine_mode.py -q"
         caso("B6.2 PostToolUse: ejecución de la comprobación (salida simulada en modo local)", dir_capa, "post_tool_use.py",
-             {**base, "hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": f"cd wt && python -m {comprobacion}"},
+             {**post, "tool_name": "Bash", "tool_input": {"command": f"cd wt && python -m {comprobacion}"},
               "tool_response": {"stdout": "...............\n15 passed in 1.04s", "stderr": "", "interrupted": False, "isImage": False}}, env,
              lambda rc, o, e: rc == 0)
-        inventada = f"ENTREGA\nComprobación: {comprobacion}\nSalida: 20 passed in 0.50s\nLECCIÓN: prueba"
-        caso("B6.3 Stop: ENTREGA con salida inventada", dir_capa, "stop.py", {**stop, "last_assistant_message": inventada}, env,
+        caso("B6.3 Stop: ENTREGA con salida inventada", dir_capa, "stop.py",
+             {**stop, "last_assistant_message": f"ENTREGA\nComprobación: {comprobacion}\nSalida: 20 passed in 0.50s\nLECCIÓN: prueba"}, env,
              lambda rc, o, e: rc == 2 and "no es la salida real" in e)
         caso("B6.4 PostToolUse: aviso a 07-verificador por send_message", dir_capa, "post_tool_use.py",
-             {**base, "hook_event_name": "PostToolUse", "tool_name": "mcp__ccd_session_mgmt__send_message",
+             {**post, "tool_name": "mcp__ccd_session_mgmt__send_message",
               "tool_input": {"session_id": "sesion-07", "message": f"ENTREGA PLAN-CS-T01 tarea 9: {comprobacion} → 15 passed in 1.04s"},
               "tool_response": {"ok": True}}, env, lambda rc, o, e: rc == 0)
         valida = f"ENTREGA\nComprobación: {comprobacion}\nSalida: 15 passed in 1.04s\nLECCIÓN: el arranque en modo real falla antes de readiness si falta una credencial"
         caso("B6.5 Stop: ENTREGA válida → lección en KB + tarea_entregada", dir_capa, "stop.py", {**stop, "last_assistant_message": valida}, env,
-             lambda rc, o, e: rc == 0 and "ENTREGA registrada" in o)
+             lambda rc, o, e: rc == 0 and "ENTREGA registrada en SYPNOSE" in o,
+             despues=lambda: comprobar(f"registro tarea_entregada={reg.cuenta('tarea_entregada')} evidencia entrega={reg.evidencias('entrega:' + cfg['carpeta'])}",
+                                       reg.cuenta("tarea_entregada") == 1 and reg.evidencias("entrega:" + cfg["carpeta"]) == 1))
         caso("B6.6 SessionStart de una segunda sesión: el brief incluye la lección", dir_capa, "brief.py",
              {**base, "session_id": sid + "-2", "hook_event_name": "SessionStart", "source": "startup", "model": "claude-sonnet-5"}, env,
              lambda rc, o, e: rc == 0 and "leccion-linea-T01-" in o)
 
     caido = {**env, "SYPNOSE_REGISTRO_URL": "http://127.0.0.1:9"}
-    caso("B7.1 registro caído: UserPromptSubmit", dir_capa, "prompt_submit.py", {**base, "hook_event_name": "UserPromptSubmit", "prompt": "sigue"},
-         caido, lambda rc, o, e: rc == 2 and "REGISTRO SYPNOSE CAÍDO" in e)
-    caso("B7.2 registro caído: PreToolUse en archivo permitido", dir_capa, "pre_tool_use.py",
+    caso("B7.1 registro caído: PreToolUse en archivo permitido sigue (no atrapa la sesión)", dir_capa, "pre_tool_use.py",
          {**pre, "tool_name": "Edit", "tool_input": {"file_path": permitido, "old_string": "a", "new_string": "b"}}, caido,
-         lambda rc, o, e: rc == 2 and "REGISTRO SYPNOSE CAÍDO" in e)
-    caso("B7.3 registro caído: PostToolUse para la sesión (continue:false)", dir_capa, "post_tool_use.py",
-         {**base, "hook_event_name": "PostToolUse", "tool_name": "Read", "tool_input": {"file_path": permitido}, "tool_response": {}}, caido,
-         lambda rc, o, e: rc == 0 and '"continue": false' in o)
-    caso("B7.4 registro caído: commit-msg con pie completo", dir_capa, "commit_msg.py", None, caido,
-         lambda rc, o, e: rc == 1 and "REGISTRO SYPNOSE CAÍDO" in e, (str(tmp / "con_pie.txt"),))
-    caso("B7.5 registro caído: SessionStart aborta la sesión", dir_capa, "brief.py",
+         (lambda rc, o, e: rc == 0) if abierto else abortado)
+    caso("B7.2 registro caído: el cerco sigue bloqueando la centinela", dir_capa, "pre_tool_use.py",
+         {**pre, "tool_name": "Write", "tool_input": {"file_path": centinela, "content": "x"}}, caido, cerco)
+    caso("B7.3 registro caído: PostToolUse encola y no para la sesión", dir_capa, "post_tool_use.py",
+         {**post, "tool_name": "Read", "tool_input": {"file_path": permitido}, "tool_response": {}}, caido,
+         lambda rc, o, e: rc == 0 and '"continue": false' not in o)
+    caso("B7.4 registro caído: el envío periódico falla y lo anota", dir_capa, "flush.py", {"session_id": sid}, caido,
+         lambda rc, o, e: rc == 0, ("--si-toca", "0"),
+         despues=lambda: comprobar(f"fallo anotado={bool(fallo_cola())} · cola={en_cola()}", bool(fallo_cola()) and en_cola() > 0))
+    caso("B7.5 registro caído: aviso visible en la siguiente herramienta", dir_capa, "post_tool_use.py",
+         {**post, "tool_name": "Read", "tool_input": {"file_path": permitido}, "tool_response": {}}, caido,
+         lambda rc, o, e: rc == 0 and "REGISTRO SYPNOSE NO RESPONDE" in o)
+    caso("B7.6 registro caído: commit-msg con pie completo no se atrapa", dir_capa, "commit_msg.py", None, caido,
+         lambda rc, o, e: rc == 0, (str(tmp / "con_pie.txt"),))
+    caso("B7.7 registro caído: Stop avisa y conserva la cola", dir_capa, "stop.py", {**stop, "last_assistant_message": "Sigo."}, caido,
+         lambda rc, o, e: rc == 0 and "REGISTRO SYPNOSE NO RESPONDE" in o,
+         despues=lambda: comprobar(f"cola conservada={en_cola()} · fallo en el cierre={(fallo_cola() or {}).get('en_stop')}",
+                                   en_cola() > 0 and bool((fallo_cola() or {}).get("en_stop"))))
+    caso("B7.8 registro caído: SessionStart no puede verificar el plan y aborta", dir_capa, "brief.py",
          {**base, "session_id": sid + "-caido", "hook_event_name": "SessionStart", "source": "startup", "model": "claude-sonnet-5"}, caido,
-         lambda rc, o, e: rc == 0 and "REGISTRO SYPNOSE CAÍDO" in o)
-    caso("B7.6 registro de vuelta: PostToolUse vacía pendientes en el registro", dir_capa, "post_tool_use.py",
-         {**base, "hook_event_name": "PostToolUse", "tool_name": "Read", "tool_input": {"file_path": permitido}, "tool_response": {}}, env,
-         lambda rc, o, e: rc == 0 and not (dir_capa / "pendientes.jsonl").exists())
+         lambda rc, o, e: rc == 0 and "no se puede verificar el plan" in o, despues=lambda: comprobar(f"cola conservada={en_cola()}", en_cola() > 0))
+    caso("B7.9 registro de vuelta: SessionStart vacía las colas y registra bloqueo:registro_caido", dir_capa, "brief.py",
+         {**base, "session_id": sid + "-vuelta", "hook_event_name": "SessionStart", "source": "startup", "model": "claude-sonnet-5"}, env,
+         lambda rc, o, e: rc == 0 and "bloqueo:registro_caido registrado" in o,
+         despues=lambda: comprobar(f"registro bloqueo:registro_caido={reg.cuenta('bloqueo:registro_caido')} evidencias={reg.evidencias('bloqueo:registro_caido')} · "
+                                   f"colas={en_cola()}/{en_cola(sid + '-caido')}",
+                                   reg.cuenta("bloqueo:registro_caido") >= 1 and en_cola() == 0 and en_cola(sid + "-caido") == 0))
 
     print(f"\n══ Evidencia en el registro (actor {args.actor}, desde {inicio}) ══")
-    sql_ev = "SELECT id, cuando, accion, plan_id, substr(detalle,1,150) FROM evento WHERE actor=? AND cuando>=? ORDER BY id"
-    sql_evid = "SELECT plan_id, fuente, substr(dice,1,170) FROM evidencia WHERE dice LIKE ? ORDER BY rowid"
-    if args.modo == "local":
-        with sqlite3.connect(env["SYPNOSE_REGISTRO_ESCRITURA"][len("sqlite:"):]) as c:
-            eventos = c.execute(sql_ev, (args.actor, inicio)).fetchall()
-            evidencias = c.execute(sql_evid, (f"%{args.actor}%",)).fetchall()
-            print("tarea 9:", c.execute("SELECT progreso FROM tarea WHERE id=9").fetchone())
-    else:
-        sys.path.insert(0, str(dir_capa))
-        import comun
-        r = comun.escribir(comun.config(), [{"op": "consulta", "sql": sql_ev, "params": [args.actor, inicio]},
-                                            {"op": "consulta", "sql": sql_evid, "params": [f"%{args.actor}%"]}])["resultados"]
-        eventos, evidencias = r[0]["filas"], r[1]["filas"]
-    for fila in eventos:
+    if db:
+        print("tarea 9:", reg.filas("SELECT progreso FROM tarea WHERE id=9"))
+    for fila in reg.filas("SELECT id, cuando, accion, plan_id, substr(detalle,1,140) FROM evento WHERE actor=? AND cuando>=? ORDER BY id", (args.actor, inicio)):
         print("  evento", fila)
-    for fila in evidencias:
+    for fila in reg.filas("SELECT plan_id, fuente, substr(dice,1,150) FROM evidencia WHERE dice LIKE ? ORDER BY rowid", (f"%{args.actor}%",)):
         m = re.search(r"\((\d{4}-\d\d-\d\dT[^)]+)\)", fila[2])
         if m and m.group(1) >= inicio:
             print("  evidencia", fila)
-    for f in (dir_capa / "estado").glob(f"{sid}*.json"):
-        f.unlink()
+    for s in (sid, sid + "-2", sid + "-caido", sid + "-vuelta"):
+        for f in [dir_capa / "estado" / f"{s}.json", dir_capa / "cola" / f"{s}.estado.json"]:
+            f.unlink(missing_ok=True)
     shutil.rmtree(tmp, ignore_errors=True)
     print("\n══ Resumen ══")
     for nombre, veredicto in RESULTADOS:
