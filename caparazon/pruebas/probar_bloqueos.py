@@ -211,11 +211,13 @@ def main() -> None:
                      lambda rc, o, e: rc == 0 and "BRIEF CAPARAZÓN" in o,
                      despues=lambda: comprobar(f"registro sesion_iniciada={reg.cuenta('sesion_iniciada')} bloqueo:brief={reg.cuenta('bloqueo:brief')} · cola={en_cola()}",
                                                (reg.cuenta("sesion_iniciada") or reg.cuenta("bloqueo:brief")) and en_cola() == 0))
-    abierto = "ABORTADO" not in out
-    abortado = lambda rc, o, e: rc == 2 and "ABORTADO" in e
+    abierto = "ABORTADO" not in out and "SIN TAREA" not in out
+    sin_tarea = "SIN TAREA" in out
+    abortado = (lambda rc, o, e: rc == 2 and "no tiene tarea asignada" in e) if sin_tarea else (lambda rc, o, e: rc == 2 and "ABORTADO" in e)
     caso("B2 UserPromptSubmit: reinyecta la EARS literal", dir_capa, "prompt_submit.py",
          {**base, "hook_event_name": "UserPromptSubmit", "prompt": "sigue con la tarea"}, env,
-         (lambda rc, o, e: rc == 0 and "texto literal del registro SYPNOSE" in o) if abierto else abortado)
+         (lambda rc, o, e: rc == 0 and "texto literal del registro SYPNOSE" in o) if abierto
+         else (lambda rc, o, e: rc == 0 and "no tiene tarea asignada" in o) if sin_tarea else abortado)
     pre = {**base, "hook_event_name": "PreToolUse", "tool_use_id": "toolu_prueba"}
     cerco = (lambda rc, o, e: rc == 2 and "CERCO" in e) if abierto else abortado
     caso("B3.1 PreToolUse: Write a la centinela fuera del worktree", dir_capa, "pre_tool_use.py",
@@ -694,6 +696,40 @@ def main() -> None:
              dir_capa, "post_tool_use.py", {**post, "session_id": sid_x, "tool_name": "Bash", "tool_input": {"command": f'cd "{wt_extra}" && ./genera.sh'},
                                              "tool_response": {"stdout": "", "stderr": "", "interrupted": False, "isImage": False}}, env,
              lambda rc, o, e: rc == 2 and "auditoría git" in e and "README.md" in e and "spec.md" not in e)
+
+        # B10 (lead, 15-sep): sin tarea abierta el humano puede hablar con su chat y el chat puede leer; solo se bloquea escribir y cambiar
+        # cosas. El prompt solo se bloquea con el registro caído. La tarea 33 pasa a espera_firma mientras duran estos casos.
+        with sqlite3.connect(db) as c:
+            c.execute("UPDATE tarea SET progreso='espera_firma', verificada_por='IA:07-verificador:claude-opus-5' WHERE id=33")
+        sid_st = f"{sid}-sin-tarea"
+        base_st, pre_st = {**base, "session_id": sid_st}, {**pre, "session_id": sid_st}
+        aviso_st = ("Este chat no tiene tarea asignada en SYPNOSE. Puede conversar y leer, pero no puede escribir ficheros ni ejecutar "
+                    "comandos que cambien nada hasta que el arquitecto le abra una tarea en PLAN-CS-T01.")
+        caso("B1.4 SessionStart sin tarea abierta: el brief da el aviso y no dice que bloquea los prompts", dir_capa, "brief.py",
+             {**base_st, "hook_event_name": "SessionStart", "source": "startup", "model": "claude-sonnet-5"}, env,
+             lambda rc, o, e: rc == 0 and "SIN TAREA" in o and "no tiene tarea asignada en SYPNOSE" in o and "bloquea tus prompts" not in o)
+        caso("B2.3 UserPromptSubmit sin tarea abierta (prompt de un humano): pasa y lleva el aviso en castellano llano", dir_capa, "prompt_submit.py",
+             {**base_st, "hook_event_name": "UserPromptSubmit", "prompt": "¿qué estás haciendo?"}, env,
+             lambda rc, o, e: rc == 0 and aviso_st in o)
+        caso("B3.15 PreToolUse sin tarea: Write bloqueada con el mismo aviso", dir_capa, "pre_tool_use.py",
+             {**pre_st, "tool_name": "Write", "tool_input": {"file_path": permitido, "content": "x"}}, env,
+             lambda rc, o, e: rc == 2 and aviso_st in e)
+        caso("B3.16 PreToolUse sin tarea: Read pasa", dir_capa, "pre_tool_use.py",
+             {**pre_st, "tool_name": "Read", "tool_input": {"file_path": permitido}}, env, lambda rc, o, e: rc == 0)
+        caso("B3.17 PreToolUse sin tarea: Bash de solo lectura (cd, git status, git log, ls, cat | grep) pasa", dir_capa, "pre_tool_use.py",
+             {**pre_st, "tool_name": "Bash",
+              "tool_input": {"command": f'cd "{wt}" && git status --short && git log --oneline -3 && ls app && cat app/main.py | grep -n def'}}, env,
+             lambda rc, o, e: rc == 0)
+        caso("B3.18 PreToolUse sin tarea: Bash que escribe en un fichero permitido → bloqueada con el aviso", dir_capa, "pre_tool_use.py",
+             {**pre_st, "tool_name": "Bash", "tool_input": {"command": "echo x > app/main.py"}}, env, lambda rc, o, e: rc == 2 and aviso_st in e)
+        caso("B3.19 PreToolUse sin tarea: Bash que cambia algo sin ruta visible (git commit, pip install) → bloqueada", dir_capa, "pre_tool_use.py",
+             {**pre_st, "tool_name": "Bash", "tool_input": {"command": 'git commit -m "x" && pip install requests'}}, env,
+             lambda rc, o, e: rc == 2 and aviso_st in e)
+        caso("B2.4 UserPromptSubmit con el registro caído: el prompt sigue bloqueado (el único caso)", dir_capa, "prompt_submit.py",
+             {**base, "session_id": f"{sid}-caido-prompt", "hook_event_name": "UserPromptSubmit", "prompt": "hola"}, caido,
+             lambda rc, o, e: rc == 2 and "ABORTADO" in e and "REGISTRO SYPNOSE CAÍDO" in e)
+        with sqlite3.connect(db) as c:
+            c.execute("UPDATE tarea SET progreso='trabajando', verificada_por=NULL WHERE id=33")
 
         # Barrera de escritura en vivo (lead, tras el incidente del 15-sep 12:34Z): en vivo solo con SYPNOSE_MODO=real, el marcador INSTALADO
         # junto a los módulos instalados y la sesión en la carpeta o en su worktree. ssh.bin apunta a un ejecutable que no existe: si la

@@ -282,6 +282,25 @@ def destinos_vivos(cfg: dict, ops: list[dict]) -> list[str]:
     return vivos
 
 
+# ── sesión sin tarea (B10, decisión del lead del 15-sep): un humano nunca se queda sin poder hablar con su chat ──
+
+AVISO_SIN_TAREA = ("Este chat no tiene tarea asignada en SYPNOSE. Puede conversar y leer, pero no puede escribir ficheros ni ejecutar "
+                   "comandos que cambien nada hasta que el arquitecto le abra una tarea en {plan}.")
+
+
+def tipo_aborto(estado: dict | None) -> str | None:
+    """None si la sesión tiene trabajo; 'registro_caido' si no se pudo verificar el plan; 'sin_tarea' en el resto de casos."""
+    if not (estado or {}).get("abortado"):
+        return None
+    return estado.get("abortado_tipo") or ("registro_caido" if str(estado.get("motivo") or "").startswith("REGISTRO SYPNOSE CAÍDO")
+                                          else "sin_tarea")
+
+
+def aviso_sin_tarea(estado: dict | None, cfg: dict) -> str:
+    plan = ((estado or {}).get("plan") or {}).get("id") or cfg.get("plan_id") or f"un plan {cfg.get('prefijo_planes') or ''}*"
+    return AVISO_SIN_TAREA.format(plan=plan)
+
+
 def aplicar_ops(c, ops):
     """Idempotente: un evento con la misma (cuando, actor, accion, plan_id, detalle) no se repite; así reenviar la cola es seguro."""
     resultados, ultimo_evento = [], None

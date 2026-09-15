@@ -212,6 +212,102 @@ def objetivos_herramienta(herramienta: str, entrada: dict, cwd: str) -> list[str
     return []
 
 
+ORDENES_LECTURA = {"ls", "dir", "cat", "type", "head", "tail", "less", "more", "grep", "egrep", "fgrep", "rg", "find", "wc", "sort", "uniq",
+                   "cut", "tr", "echo", "printf", "pwd", "cd", "pushd", "popd", "which", "where", "whoami", "hostname", "date", "tree",
+                   "stat", "file", "diff", "cmp", "du", "df", "env", "printenv", "basename", "dirname", "realpath", "readlink", "sha256sum",
+                   "md5sum", "jq", "column", "nl", "true", "false", "test", "[", "git",
+                   "get-content", "gc", "get-childitem", "gci", "get-item", "gi", "select-string", "sls", "get-location", "gl", "test-path",
+                   "resolve-path", "measure-object", "select-object", "where-object", "sort-object", "format-table", "format-list",
+                   "out-string", "get-date", "write-output", "write-host"}
+GIT_CONSULTA = {"status", "log", "diff", "show", "rev-parse", "rev-list", "ls-files", "ls-tree", "ls-remote", "show-ref", "blame", "describe",
+                "shortlog", "grep", "cat-file", "merge-base", "name-rev", "for-each-ref", "whatchanged", "range-diff", "version", "help"}
+FIND_ESCRIBE = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
+
+
+def _git_consulta(args: list[str]) -> bool:
+    j = 0
+    while j < len(args) and args[j].startswith("-"):
+        j += 2 if args[j] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace") else 1
+    if j >= len(args):
+        return True
+    sub, resto = args[j], args[j + 1:]
+    posic = [a for a in resto if not a.startswith("-")]
+    if any(a.startswith("--output") for a in resto):
+        return False
+    if sub in GIT_CONSULTA:
+        return True
+    if sub == "branch":
+        return not posic and not any(a in ("-d", "-D", "-m", "-M", "-c", "-C", "-f", "-u", "--delete", "--move", "--copy", "--force",
+                                           "--unset-upstream", "--edit-description") or a.startswith("--set-upstream") for a in resto)
+    if sub == "remote":
+        return not posic or posic[0] in ("show", "get-url")
+    if sub == "config":
+        return (any(a in ("--get", "--get-all", "--get-regexp", "--list", "-l") for a in resto)
+                and not any(a in ("--unset", "--unset-all", "--add", "--replace-all", "--edit", "-e") for a in resto))
+    if sub == "tag":
+        return ("-l" in resto or "--list" in resto or not posic) and not any(a in ("-d", "--delete", "-a", "-s", "-f", "-m", "-F") for a in resto)
+    if sub in ("worktree", "stash"):
+        return bool(posic) and posic[0] in ("list", "show")
+    if sub == "reflog":
+        return not posic or posic[0] == "show"
+    return False
+
+
+def _segmento_lectura(seg: list[str]) -> bool:
+    resto, i = [], 0
+    while i < len(seg):
+        t = seg[i]
+        if t in REDIRECCIONES or t in (">&", "<", "<<", "<<<") or (t.endswith(">") and set(t) <= set("0123456789&>|")):
+            i += 2
+            continue
+        resto.append(t)
+        i += 1
+    while resto and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", resto[0]) or resto[0] in ("env", "time", "command")):
+        resto.pop(0)
+    if not resto:
+        return True
+    orden, args = re.sub(r"\.exe$", "", os.path.basename(resto[0]).lower()), resto[1:]
+    posic = [a for a in args if not a.startswith("-")]
+    if orden not in ORDENES_LECTURA:
+        return False
+    if orden == "find":
+        return not FIND_ESCRIBE.intersection(args)
+    if orden == "sort":
+        return not any(a == "-o" or a.startswith("--output") or (a.startswith("-o") and len(a) > 2) for a in args)
+    if orden == "uniq":
+        return len(posic) <= 1
+    if orden == "tree":
+        return "-o" not in args
+    if orden == "date":
+        return not any(a in ("-s", "--set") or a.startswith("--set=") for a in args) and all(p.startswith("+") for p in posic)
+    if orden == "hostname":
+        return not posic
+    if orden == "git":
+        return _git_consulta(args)
+    return True
+
+
+def solo_lectura(comando: str) -> bool:
+    """True si el comando de shell solo lee (B10): sin sustituciones, sin escrituras detectadas y con órdenes de una lista de consulta
+    (git solo en sus formas de consulta). Lo que no se reconoce cuenta como un cambio."""
+    if "$(" in comando or "`" in comando:
+        return False
+    if any(not o.startswith(GIT_C) and o.strip().lower() not in INOCUOS for o in objetivos_shell(comando, os.getcwd())):
+        return False
+    for linea in comando.splitlines():
+        segmento, segmentos = [], []
+        for t in _tokens(linea):
+            if t in SEPARADORES:
+                segmentos.append(segmento)
+                segmento = []
+            else:
+                segmento.append(t)
+        segmentos.append(segmento)
+        if not all(_segmento_lectura(s) for s in segmentos):
+            return False
+    return True
+
+
 def cambios_git(worktree: str) -> set[str] | None:
     try:
         p = subprocess.run(["git", "-C", worktree, "status", "--porcelain=v1", "-uall", "-z"],
