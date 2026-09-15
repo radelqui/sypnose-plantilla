@@ -152,6 +152,9 @@ def envio_inicial(cfg: dict) -> str:
     caidas = sum(1 for r in resultados if r.get("caido_registrado"))
     if caidas:
         partes.append(f"bloqueo:registro_caido registrado ({caidas} cola(s) retenida(s) por registro caído)")
+    kb_caidas = sum(1 for r in resultados if r.get("kb_caida_registrada"))
+    if kb_caidas:
+        partes.append(f"bloqueo:kb_caida registrado ({kb_caidas} cola(s) con lecciones retenidas por la KB caída)")
     pruebas = [r for r in resultados if r["estado"] == "prueba"]
     if pruebas:
         partes.append(comun.texto_fallo_cola(cfg, {**pruebas[0], "pendientes": sum(r["pendientes"] for r in pruebas),
