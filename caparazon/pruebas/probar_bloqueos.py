@@ -755,6 +755,42 @@ def main() -> None:
         with sqlite3.connect(db) as c:
             c.execute("UPDATE tarea SET progreso='trabajando', verificada_por=NULL WHERE id=33")
 
+        # B12 (lead, 15-sep; eventos 22685–22693 de 02): el requisito vigente sale del registro en cada prompt y antes de validar una
+        # ENTREGA. La foto del estado de la sesión no vale para entregar, y con el registro caído la ENTREGA se bloquea.
+        def poner_comprobacion(texto: str) -> None:
+            with sqlite3.connect(db) as c:
+                c.execute("UPDATE requisito SET comprobacion=? WHERE plan_id='PLAN-CS-T01'", (texto,))
+
+        c_sin_q, c_engine, c_main = "pytest tests/test_main.py tests/test_engine_mode.py", "pytest tests/test_engine_mode.py", "pytest tests/test_main.py"
+        verde_b12 = f"{puntos}\n15 passed in 1.04s\n"
+        sid_12a = f"{sid}-b12-vigente"
+        preparar_entrega(sid_12a, comprobacion, [(c_sin_q, verde_b12)])
+        poner_comprobacion(c_sin_q)
+        caso("B6.23 Stop: la comprobación cambia en el registro a mitad de sesión y la ENTREGA con la vigente pasa (caso real de 02, 22685→22690)",
+             dir_capa, "stop.py", {**stop, "session_id": sid_12a,
+                                   "last_assistant_message": f"ENTREGA\nComprobación: {c_sin_q}\nSalida: 15 passed in 1.04s\nLECCIÓN: prueba"}, env,
+             lambda rc, o, e: rc == 0 and "ENTREGA registrada en SYPNOSE" in o,
+             despues=lambda: comprobar(f"tarea_entregada: {detalles('tarea_entregada')[-1][:100]}", f"`{c_sin_q}` →" in detalles("tarea_entregada")[-1]))
+        sid_12b = f"{sid}-b12-antigua"
+        preparar_entrega(sid_12b, c_engine, [(c_engine, verde_b12)])
+        poner_comprobacion(c_main)
+        caso("B6.23b Stop: la ENTREGA con la comprobación antigua se rechaza y dice qué cambió en el registro", dir_capa, "stop.py",
+             {**stop, "session_id": sid_12b, "last_assistant_message": f"ENTREGA\nComprobación: {c_engine}\nSalida: 15 passed in 1.04s\nLECCIÓN: prueba"},
+             env, lambda rc, o, e: rc == 2 and f"cambió en el registro: ahora es `{c_main}`" in e)
+        poner_comprobacion(c_engine)
+        caso("B2.5 UserPromptSubmit tras cambiar la comprobación en el registro: inyecta la vigente y avisa del cambio", dir_capa, "prompt_submit.py",
+             {**base, "session_id": sid_12b, "hook_event_name": "UserPromptSubmit", "prompt": "sigue"}, env,
+             lambda rc, o, e: rc == 0 and f"Comprobación: {c_engine}" in o and "cambió en el registro" in o)
+        sid_12c = f"{sid}-b12-caido"
+        preparar_entrega(sid_12c, c_engine, [(c_engine, verde_b12)])
+        cola_12c = lambda: (dir_capa / "cola" / f"{sid_12c}.jsonl").read_text(encoding="utf-8") if (dir_capa / "cola" / f"{sid_12c}.jsonl").exists() else ""
+        caso("B6.24 Stop con ENTREGA y el registro caído: bloqueada hasta confirmar la comprobación vigente, con bloqueo:registro_caido en la cola",
+             dir_capa, "stop.py", {**stop, "session_id": sid_12c,
+                                   "last_assistant_message": f"ENTREGA\nComprobación: {c_engine}\nSalida: 15 passed in 1.04s\nLECCIÓN: prueba"}, caido,
+             lambda rc, o, e: rc == 2 and "no se pudo confirmar la comprobación vigente: registro caído; reintenta la ENTREGA cuando vuelva" in e,
+             despues=lambda: comprobar(f"bloqueo:registro_caido en la cola={'bloqueo:registro_caido' in cola_12c()}", "bloqueo:registro_caido" in cola_12c()))
+        poner_comprobacion(comprobacion)
+
         # Barrera de escritura en vivo (lead, tras el incidente del 15-sep 12:34Z): en vivo solo con SYPNOSE_MODO=real, el marcador INSTALADO
         # junto a los módulos instalados y la sesión en la carpeta o en su worktree. ssh.bin apunta a un ejecutable que no existe: si la
         # barrera se abre, el envío falla en el PC ("SSH al registro falló") y nada sale a la red.

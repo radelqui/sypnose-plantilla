@@ -293,6 +293,40 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
     return estado
 
 
+def refrescar_trabajo(estado: dict, entrada: dict, cfg: dict) -> tuple[dict, list[str]]:
+    """B12 (lead, 15-sep): el requisito, la tarea y los permitidos vigentes salen del registro, no de la foto guardada en el estado de la
+    sesión. Si la tarea ya no se puede trabajar o el plan ya no está abierto, reconstruye el estado. Devuelve el estado y los cambios
+    vistos. Lanza comun.RegistroCaido si el registro no responde."""
+    plan_id, tarea = (estado.get("plan") or {}).get("id"), estado.get("tarea") or {}
+    if estado.get("abortado") or not plan_id or not tarea:
+        return estado, []
+    detalle = comun.leer_registro(cfg, "/plan/" + urllib.parse.quote(plan_id, safe=""))
+    plan = detalle.get("plan") or {}
+    vigente = next((t for t in detalle.get("tareas") or [] if t.get("id") == tarea.get("id")), None)
+    req = next((r for r in detalle.get("requisitos") or [] if vigente and r.get("ref") == vigente.get("req_ref")), None)
+    if not vigente or vigente.get("progreso") not in ("pendiente", "trabajando", "devuelta") or not req or plan.get("estado") != "abierto":
+        situacion = vigente.get("progreso") if vigente else "no está en el registro"
+        if plan.get("estado") != "abierto":
+            situacion += f", plan {plan.get('estado')}"
+        return construir_estado(entrada, cfg), [f"la tarea {tarea.get('id')} ya no se puede trabajar ({situacion}): el caparazón ha vuelto a leer el registro"]
+    anterior, cambios = estado.get("requisito") or {}, []
+    if req.get("comprobacion") != anterior.get("comprobacion"):
+        cambios.append(f"la comprobación de {req.get('ref')} cambió en el registro: ahora es `{req.get('comprobacion')}` "
+                       f"(antes `{anterior.get('comprobacion')}`)")
+    if req.get("ears") != anterior.get("ears"):
+        cambios.append(f"el texto EARS de {req.get('ref')} cambió en el registro")
+    permitidos, fuente = resolver_permitidos(plan, cfg)
+    if permitidos and permitidos != estado.get("permitidos"):
+        cambios.append(f"los archivos permitidos cambiaron en el registro: {', '.join(permitidos)}")
+
+    def aplicar(e: dict) -> None:
+        e.update(requisito=req, tarea={**(e.get("tarea") or {}), "progreso": vigente.get("progreso")}, requisito_confirmado=comun.ahora())
+        if permitidos:
+            e.update(permitidos=permitidos, permitidos_fuente=fuente)
+
+    return comun.actualizar_estado(estado["session_id"], aplicar), cambios
+
+
 def main() -> None:
     entrada = comun.leer_stdin()
     cfg = comun.config()
