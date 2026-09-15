@@ -13,6 +13,7 @@ Decisión lead 15-sep-2026. Corrección 07-verificador: oferta.yaml modificable 
 from __future__ import annotations
 
 import hashlib
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -122,13 +123,18 @@ def verificar_canonicos_registrados(conn) -> None:
         sys.exit(f"[FALLO] plantilla HEAD ({pc[:12]}) ≠ registrado ({reg_pc[0][:12]}). sync --registrar-hash.")
 
 
+_RE_ACTOR07_ID = re.compile(r"^IA:07-verificador:[a-z0-9.-]+$")
+
+
 def actor07_valido(actor_id: str, conn, _seen: set | None = None) -> bool:
     """An IA:07-verificador:* actor is valid only if ratified by a human or by a valid 07 actor.
 
-    Checks actor_ratificado events (nodo_id = target) and alta_actor events
-    (detalle starts with target id). The signer (evento.actor) must be H:*
-    or a recursively valid IA:07-verificador:* actor.
+    Uses exact nodo_id match on actor_ratificado events only. The signer
+    must be a registered human (actor table, clase='humano') or a recursively
+    valid IA:07-verificador:* actor. Actor IDs must match a strict format.
     """
+    if not _RE_ACTOR07_ID.match(actor_id):
+        return False
     if _seen is None:
         _seen = set()
     if actor_id in _seen:
@@ -136,15 +142,20 @@ def actor07_valido(actor_id: str, conn, _seen: set | None = None) -> bool:
     _seen.add(actor_id)
     rows = conn.execute(
         "SELECT actor FROM evento "
-        "WHERE accion IN ('actor_ratificado','alta_actor') "
-        "AND (nodo_id = ? OR detalle LIKE ? || '%') "
+        "WHERE accion = 'actor_ratificado' "
+        "AND nodo_id = ? "
         "AND actor != ?",
-        (actor_id, actor_id, actor_id),
+        (actor_id, actor_id),
     ).fetchall()
     for (signer,) in rows:
         if signer.startswith("H:"):
-            return True
-        if signer.startswith("IA:07-verificador:") and actor07_valido(signer, conn, _seen):
+            if conn.execute(
+                "SELECT 1 FROM actor WHERE id = ? AND clase = 'humano'",
+                (signer,),
+            ).fetchone():
+                return True
+            continue
+        if _RE_ACTOR07_ID.match(signer) and actor07_valido(signer, conn, _seen):
             return True
     return False
 
