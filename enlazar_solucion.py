@@ -197,7 +197,7 @@ def _gh_run_success(run_id: str) -> bool:
         return False
 
 
-def validar_fuente(fuente: str, conn=None) -> tuple[bool, str]:
+def validar_fuente(fuente: str, conn=None, plan_id: str | None = None) -> tuple[bool, str]:
     """Returns (valid, reason). Unknown formats are invalid."""
     # plan:PLAN-ID → plan must exist in DB
     m = RE_PLAN_REF.match(fuente)
@@ -207,10 +207,21 @@ def validar_fuente(fuente: str, conn=None) -> tuple[bool, str]:
             return True, "ok"
         return False, f"plan {plan_id} not found in DB"
 
-    # 07-verificador/* → valid by registry presence (D7: lead decision, the evidence
-    # row written by actor 07 IS the proof; never read verifier files from disk)
+    # 07-verificador/* → valid only if evento has matching row from actor 07
+    # (lead decision: no blind accept, no file reads, event = proof)
     if RE_VERIFICADOR.match(fuente):
-        return True, "ok"
+        if ".." in fuente:
+            return False, "path traversal rejected"
+        if not conn or not plan_id:
+            return False, "needs DB connection and plan_id"
+        row = conn.execute(
+            "SELECT 1 FROM evento WHERE actor LIKE 'IA:07-verificador:%' "
+            "AND accion='evidencia_07' AND plan_id=? AND detalle=?",
+            (plan_id, fuente),
+        ).fetchone()
+        if row:
+            return True, "ok"
+        return False, "no evidencia_07 event from actor 07"
 
     # git:<repo> → repo directory must exist and be a git repo
     m = RE_GIT_REPO.match(fuente)
@@ -285,7 +296,7 @@ def calcular_certeza(conn, plan_id: str) -> tuple[str, list[str]]:
         if re.search(r"\bPARCIAL\b", dice, re.IGNORECASE):
             alguna_falla = True
             razones.append(f"dice contiene PARCIAL: {fuente}")
-        valida, motivo = validar_fuente(fuente, conn)
+        valida, motivo = validar_fuente(fuente, conn, plan_id)
         if not valida:
             alguna_falla = True
             razones.append(f"fuente inválida: {fuente} ({motivo})")
