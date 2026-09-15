@@ -5,10 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import operator
+import os
 import re
+import shlex
 import sys
 from datetime import datetime
 
+import cerco
 import comun
 from brief import FORMATO_ENTREGA
 
@@ -55,13 +58,64 @@ def cumple_esperado(esperado: str, salida: str) -> str | None:
     m = COMPARADOR.match(esperado)
     if not m:
         return None if compacto(esperado).lower() in compacto(salida).lower() else f"la salida no muestra lo esperado «{esperado}»"
-    numeros = [l.strip() for l in salida.splitlines() if re.fullmatch(r"-?\d+(?:[.,]\d+)?", l.strip())]
-    if not numeros:
-        return f"la salida no trae un número que comparar con lo esperado {esperado}"
-    observado = float(numeros[-1].replace(",", "."))
+    lineas = [l.strip() for l in salida.splitlines() if l.strip()]
+    numeros = [l for l in lineas if re.fullmatch(r"-?\d+(?:[.,]\d+)?", l)]
+    if len(numeros) != 1 or len(lineas) - len(numeros) > 1:
+        return (f"la salida completa no es un único valor que comparar con lo esperado {esperado} "
+                f"({len(numeros)} valores numéricos en {len(lineas)} líneas)")
+    observado = float(numeros[0].replace(",", "."))
     if OPERACIONES[m.group(1)](observado, float(m.group(2).replace(",", "."))):
         return None
-    return f"el resultado observado {numeros[-1]} no cumple lo esperado {esperado}"
+    return f"el resultado observado {numeros[0]} no cumple lo esperado {esperado}"
+
+
+PUNTUACION = re.compile(r"[;&|<>]+")
+CD = re.compile(r"""(?is)^\s*(?:cd|set-location|pushd)\s+("[^"]*"|'[^']*'|\S+)\s*&&\s*(.+)$""")
+
+
+def _tokens(texto: str) -> list[str] | None:
+    try:
+        lx = shlex.shlex(texto, posix=True, punctuation_chars=";&|<>")
+        lx.whitespace_split = True
+        return list(lx)
+    except ValueError:
+        return None
+
+
+def _es_sqlite(toks: list[str] | None, consulta: str) -> bool:
+    return (bool(toks) and len(toks) >= 3 and os.path.basename(toks[0]).lower() in ("sqlite3", "sqlite3.exe")
+            and not any(PUNTUACION.fullmatch(t) for t in toks) and all(t.startswith("-") for t in toks[1:-2])
+            and suelto(toks[-1]) == suelto(consulta))
+
+
+def forma_pura(comando: str, comprobacion: str, cwd: str | None, worktree: str) -> str | None:
+    """None si el comando es exactamente la comprobación (solo se admite `cd <worktree> &&` delante; una consulta SQL va como
+    `sqlite3 <bd> "<consulta>"`, directa o por ssh); si no, por qué no cuenta. Un filtro, un `; echo`, una sustitución o un echo del texto
+    de la comprobación falsearían la salida que se valida."""
+    orden = ejecutable(comprobacion)
+    base, resto = cwd or worktree, comando.strip()
+    m = CD.match(resto)
+    if m:
+        base, resto = cerco.norm(m.group(1).strip("\"'"), base), m.group(2)
+    toks = _tokens(resto)
+    if toks is None:
+        return "el comando no se puede leer"
+    if any(PUNTUACION.fullmatch(t) for t in toks):
+        return "lleva tuberías, ';', '&&'/'||' o redirecciones"
+    if any("$(" in t or "`" in t or "${" in t for t in toks):
+        return "lleva sustituciones ($(…), `…` o ${…})"
+    if re.match(r"(?is)^\s*(select|with)\b", orden):
+        if _es_sqlite(toks, orden):
+            return None
+        if len(toks) >= 3 and os.path.basename(toks[0]).lower() in ("ssh", "ssh.exe") and _es_sqlite(_tokens(toks[-1]), orden):
+            return None
+        return "no es la consulta tal cual (sqlite3 <bd> \"<consulta>\", directa o por ssh)"
+    esperados = _tokens(orden) or []
+    if [suelto(t) for t in toks] != [suelto(t) for t in esperados]:
+        return "no es exactamente la comprobación"
+    if not cerco.dentro(cerco.norm(base, base), cerco.norm(worktree, worktree)):
+        return f"se ejecutó fuera del worktree ({base})"
+    return None
 
 
 def validar(bloque: str, estado: dict):
@@ -70,10 +124,15 @@ def validar(bloque: str, estado: dict):
     orden = suelto(ejecutable(comprobacion))
     if orden not in suelto(bloque):
         fallos.append(f"el bloque ENTREGA no cita la comprobación literal `{comprobacion}`")
-    ejecuciones = [c for c in estado.get("comandos", []) if orden in suelto(c["comando"])]
+    intentos = [c for c in estado.get("comandos", []) if orden in suelto(c["comando"])]
+    ejecuciones = [c for c in intentos if forma_pura(c["comando"], comprobacion, c.get("cwd"), estado["worktree"]) is None]
+    if intentos and (not ejecuciones or intentos[-1] is not ejecuciones[-1]):
+        motivo = forma_pura(intentos[-1]["comando"], comprobacion, intentos[-1].get("cwd"), estado["worktree"])
+        fallos.append(f"la última ejecución de la comprobación («{intentos[-1]['comando'][:160]}») no cuenta: {motivo}. Tiene que ir tal cual "
+                      "(solo se admite delante 'cd <worktree> &&'), sin tuberías, ';', '&&'/'||' añadidos, echo, redirecciones ni sustituciones")
     linea_salida = None
     if not ejecuciones:
-        fallos.append(f"la comprobación `{ejecutable(comprobacion)}` no se ha ejecutado en esta sesión con Bash/PowerShell")
+        fallos.append(f"la comprobación `{ejecutable(comprobacion)}` no se ha ejecutado tal cual en esta sesión con Bash/PowerShell")
     else:
         ultima = ejecuciones[-1]
         if ultima.get("interrumpido"):
