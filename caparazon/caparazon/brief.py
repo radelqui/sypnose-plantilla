@@ -146,7 +146,7 @@ def unir_nota(nota: str, texto: str) -> str:
 def envio_inicial(cfg: dict) -> str:
     resultados = comun.vaciar_todas(cfg, "arranque")
     partes = []
-    enviadas = sum(r.get("enviadas", 0) for r in resultados if r["estado"] in ("ok", "rechazo"))
+    enviadas = sum(r.get("enviadas", 0) for r in resultados if r["estado"] in ("ok", "rechazo", "kb_pendiente"))
     if enviadas:
         partes.append(f"{enviadas} operaciones pendientes enviadas al registro")
     caidas = sum(1 for r in resultados if r.get("caido_registrado"))
@@ -156,7 +156,7 @@ def envio_inicial(cfg: dict) -> str:
     if pruebas:
         partes.append(comun.texto_fallo_cola(cfg, {**pruebas[0], "pendientes": sum(r["pendientes"] for r in pruebas),
                                                    "cola": pruebas[0]["cola"] if len(pruebas) == 1 else f"{len(pruebas)} colas en {comun.COLA_DIR}"}))
-    partes += [comun.texto_fallo_cola(cfg, r) for r in resultados if r["estado"] in ("fallo", "rechazo")]
+    partes += [comun.texto_fallo_cola(cfg, r) for r in resultados if r["estado"] in ("fallo", "rechazo", "kb_pendiente")]
     return " · ".join(p for p in partes if p)
 
 
@@ -244,7 +244,7 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
         ops.insert(0, {"op": "actor", "id": estado["actor"], "rol": cfg["carpeta"], "modelo": modelo})
     comun.encolar(sid, ops)
     r = comun.vaciar(cfg, sid, "arranque")
-    if r["estado"] in ("ok", "rechazo"):
+    if r["estado"] in ("ok", "rechazo", "kb_pendiente"):
         with contextlib.suppress(comun.RegistroCaido, KeyError, StopIteration):
             fresco = comun.leer_registro(cfg, "/plan/" + urllib.parse.quote(p["id"], safe=""))
             estado["tarea"]["progreso"] = next(t["progreso"] for t in fresco["tareas"] if t["id"] == tarea["id"])
