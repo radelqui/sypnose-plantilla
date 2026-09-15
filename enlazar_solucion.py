@@ -208,19 +208,26 @@ def validar_fuente(fuente: str, conn=None, plan_id: str | None = None) -> tuple[
         return False, f"plan {plan_id} not found in DB"
 
     # 07-verificador/* → valid only if evento has matching row from actor 07
-    # (lead decision: no blind accept, no file reads, event = proof)
+    # (lead decision: exact canonical actor from DB, no LIKE, no file reads)
     if RE_VERIFICADOR.match(fuente):
         if ".." in fuente:
             return False, "path traversal rejected"
         if not conn or not plan_id:
             return False, "needs DB connection and plan_id"
-        row = conn.execute(
-            "SELECT 1 FROM evento WHERE actor LIKE 'IA:07-verificador:%' "
-            "AND accion='evidencia_07' AND plan_id=? AND detalle=?",
-            (plan_id, fuente),
+        actor_07 = conn.execute(
+            "SELECT id FROM actor WHERE id LIKE 'IA:07-verificador:%'"
         ).fetchone()
-        if row:
-            return True, "ok"
+        if not actor_07:
+            return False, "no 07-verificador actor registered"
+        rows = conn.execute(
+            "SELECT actor FROM evento WHERE accion='evidencia_07' AND plan_id=? AND detalle=?",
+            (plan_id, fuente),
+        ).fetchall()
+        for (actor,) in rows:
+            if actor == actor_07[0]:
+                return True, "ok"
+            if "07-verificador" in actor and actor != actor_07[0]:
+                return False, f"unknown 07-verificador actor: {actor}"
         return False, "no evidencia_07 event from actor 07"
 
     # git:<repo> → repo directory must exist and be a git repo
