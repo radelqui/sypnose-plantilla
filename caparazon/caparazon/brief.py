@@ -17,6 +17,8 @@ FORMATO_ENTREGA = (
     "send_message que incluya el bloque ENTREGA; y un mensaje final que termina con el bloque:\n"
     "ENTREGA\nComprobación: <comando literal del requisito>\nSalida: <líneas reales de la salida, pegadas sin retocar>\n"
     "LECCIÓN: <una línea útil para el siguiente agente de esta línea de la oferta>\n"
+    "Una ENTREGA solo vale si la comprobación pasa: una salida con fallos (failed, error, Traceback, exit code distinto de 0) o un "
+    "resultado que no cumple lo esperado tras '→' la invalida.\n"
     "Cuando la entrega no es posible, una última línea 'PREGUNTA: <qué hace falta de Carlos>' o 'BLOQUEADO: <qué impide entregar>' "
     "permite cerrar y queda registrada para Carlos como pregunta_humano. Un segundo intento de cierre sin ENTREGA válida también se "
     "permite, pero la tarea queda como bloqueo:entrega_incompleta."
