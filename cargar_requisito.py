@@ -117,6 +117,8 @@ def main() -> None:
     ap.add_argument("--db", required=True, help="ruta a registry.db")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--actor", default=ACTOR)
+    ap.add_argument("--delegado", action="store_true",
+                    help="omite validación de autoría (Chat: trailer) para specs escritos por delegación del lead")
     args = ap.parse_args()
 
     db_path = Path(args.db).expanduser().resolve()
@@ -152,11 +154,15 @@ def main() -> None:
     print(f"[rol esperado] {rol_esperado}")
 
     if spec_autor != rol_esperado:
-        sys.exit(
-            f"[FALLO] autoría: último commit de {spec_rel} es Chat: {spec_autor}, "
-            f"pero roles_por_linea exige {rol_esperado} para {args.sigla}"
-        )
-    print("[autoría] OK")
+        if args.delegado:
+            print(f"[WARN] autoría: Chat: {spec_autor} ≠ {rol_esperado} — aceptado por --delegado")
+        else:
+            sys.exit(
+                f"[FALLO] autoría: último commit de {spec_rel} es Chat: {spec_autor}, "
+                f"pero roles_por_linea exige {rol_esperado} para {args.sigla}"
+            )
+    else:
+        print("[autoría] OK")
 
     texto = spec_path.read_text(encoding="utf-8")
     seccion = extraer_seccion_r(texto, ref)
