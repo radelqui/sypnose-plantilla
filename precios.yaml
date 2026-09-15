@@ -1,0 +1,21 @@
+# Precios por modelo (USD por millón de tokens, sep-2026). Fuente: anthropic.com/pricing
+# TRASPASO-4 A3: el cargador de chats usa esta tabla para calcular tarea.coste.
+modelos:
+  claude-opus-5:
+    input: 15.00
+    output: 75.00
+  claude-opus-4-6:
+    input: 15.00
+    output: 75.00
+  claude-sonnet-5:
+    input: 3.00
+    output: 15.00
+  claude-sonnet-4-5-20250514:
+    input: 3.00
+    output: 15.00
+  claude-haiku-4-5-20251001:
+    input: 0.80
+    output: 4.00
+  claude-fable-5-1:
+    input: 30.00
+    output: 150.00

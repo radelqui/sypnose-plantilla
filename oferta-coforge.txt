@@ -1,0 +1,24 @@
+Python Developer + IA
+Coforge · España (En remoto)
+Experience: 3+ years
+
+We are looking for a Python developer with experience in IA.
+
+Key Responsibilities
+• Develop and maintain web applications using Python for backend services
+• Program AI agents
+• Design, build, and consume RESTful APIs and microservices.
+• Implement responsive and user-friendly interfaces.
+• Ensure application performance, scalability, and reliability.
+• Participate in code reviews and development best practices.
+• Participate in CI/CD implementation and deployment processes.
+• Knowledge of relational databases such as PostgreSQL, MySQL, or SQL Server.
+• Experience with Git and version control best practices.
+• Understanding of software design principles and object-oriented programming
+
+Nice to have - Not exclusive:
+• Knowledge or experience in React or front-end technologies (React, vue, JavaScript...)
+• Experience or knowledge of Artificial Intelligence and Generative AI concepts.
+• Docker and Kubernetes knowledge.
+• Experience with CI/CD tools.
+• Knowledge of microservices architecture.
