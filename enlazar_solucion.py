@@ -1,5 +1,8 @@
 """TRASPASO-4 A2: crea nodo solución, relaciones cubre, plan_objetivo, afirmaciones para la vista.
 
+Mapeos canónicos se leen de oferta.yaml (plan_por_linea, cubre_por_evidencia).
+Nunca heurísticas; todo explícito y bajo barrera hash.
+
     python3 enlazar_solucion.py --db ~/sypnose-f1/registry.db [--dry-run]
 """
 from __future__ import annotations
@@ -11,7 +14,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from barrera import verificar_repo_limpio
+import yaml
+
+from barrera import PLANTILLA_DIR, verificar_canonicos_registrados, verificar_repo_limpio
 
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-5"
 FUENTE = "plantilla/enlazar_solucion.py"
@@ -22,7 +27,7 @@ SOL_NOMBRE = "rag-banking-agent (Coforge/Santander)"
 PROY_ID = "proy:vmi3211028:rag-banking-agent"
 OFERTA_TITULO = "Python Developer + IA · Coforge / Santander"
 REPO_URL = "https://github.com/radelqui/rag-banking-agent"
-EXCLUIR_CUBRE_SOL = {"linea:coforge:T04", "linea:coforge:T11"}
+OFERTA_YAML = PLANTILLA_DIR / "oferta.yaml"
 
 
 def ahora() -> str:
@@ -115,6 +120,20 @@ def afirmar(conn, actor, nodo_id, campo, valor, certeza="observado"):
     return True
 
 
+def cargar_oferta_yaml():
+    if not OFERTA_YAML.exists():
+        sys.exit(f"[FALLO] no existe {OFERTA_YAML}")
+    with open(OFERTA_YAML, encoding="utf-8") as f:
+        doc = yaml.safe_load(f)
+    plan_por_linea = doc.get("plan_por_linea")
+    if not plan_por_linea:
+        sys.exit("[FALLO] oferta.yaml no contiene plan_por_linea")
+    cubre_por_evidencia = doc.get("cubre_por_evidencia")
+    if not cubre_por_evidencia:
+        sys.exit("[FALLO] oferta.yaml no contiene cubre_por_evidencia")
+    return plan_por_linea, set(cubre_por_evidencia)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
@@ -124,12 +143,17 @@ def main() -> None:
 
     verificar_repo_limpio()
 
+    plan_por_linea, cubre_set = cargar_oferta_yaml()
+    print(f"[oferta.yaml] plan_por_linea: {len(plan_por_linea)} entradas, cubre_por_evidencia: {len(cubre_set)} líneas")
+
     db_path = Path(args.db).expanduser()
     conn = sqlite3.connect(db_path, isolation_level=None)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 8000")
     if not conn.execute("SELECT 1 FROM actor WHERE id=?", (args.actor,)).fetchone():
         sys.exit(f"[FALLO] actor {args.actor} no existe")
+
+    verificar_canonicos_registrados(conn)
 
     lineas = conn.execute(
         "SELECT id FROM nodo WHERE tipo='linea_oferta' ORDER BY id"
@@ -158,8 +182,10 @@ def main() -> None:
         if SOL_ID in [a.split()[-1] for a in altas if "nodo" in a]:
             evento(conn, args.actor, "alta_nodo", f"nodo solución {SOL_ID}", nodo_id=SOL_ID)
 
+        # cubre: solo líneas en cubre_por_evidencia (de oferta.yaml)
         for (linea_id,) in lineas:
-            if linea_id in EXCLUIR_CUBRE_SOL:
+            sufijo = linea_id.replace("linea:coforge:", "")
+            if sufijo not in cubre_set:
                 continue
             rc = conn.execute(
                 "INSERT OR IGNORE INTO relacion (origen, destino, tipo, certeza, fuente, visto_en) "
@@ -224,26 +250,13 @@ def main() -> None:
         else:
             existian.append(f"afirmacion oferta_titulo en {SOL_ID}")
 
-        plan_linea_map = {}
-        for campo, valor in conn.execute(
-            "SELECT campo, valor FROM afirmacion WHERE nodo_id=? AND campo LIKE 'plan_linea:%' AND vigente=1",
-            (NODO_PLANTILLA,),
-        ).fetchall():
-            lid = campo.replace("plan_linea:", "")
-            sufijo_t = valor.replace("PLAN-T-", "").lstrip("0")
-            plan_linea_map[sufijo_t] = lid
-
-        planes_cs = conn.execute(
-            "SELECT id FROM plan WHERE id LIKE 'PLAN-CS-T%' ORDER BY id"
-        ).fetchall()
+        # plan_objetivo: desde plan_por_linea de oferta.yaml (explícito, sin heurísticas)
         obj_altas = 0
-        for (plan_id,) in planes_cs:
-            sufijo = plan_id.replace("PLAN-CS-T", "").lstrip("0")
-            lid = plan_linea_map.get(sufijo)
-            if not lid:
-                avisos.append(f"plan_objetivo: {plan_id} sin plan_linea, se omite")
+        for plan_id, linea_sufijo in plan_por_linea.items():
+            linea_id = f"linea:coforge:{linea_sufijo}"
+            if not conn.execute("SELECT 1 FROM plan WHERE id=?", (plan_id,)).fetchone():
+                avisos.append(f"plan_objetivo: plan {plan_id} no existe en DB, se omite")
                 continue
-            linea_id = f"linea:coforge:{lid}"
             if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (linea_id,)).fetchone():
                 avisos.append(f"plan_objetivo: {linea_id} no existe, se omite {plan_id}")
                 continue
@@ -261,6 +274,7 @@ def main() -> None:
             evento(conn, args.actor, "plan_objetivo_lineas",
                    f"{obj_altas} PLAN-CS-T enlazados a linea_oferta como objetivo")
 
+        # commit por fichero
         escrito_por = conn.execute(
             "SELECT id, nodo_id, valor FROM afirmacion WHERE campo='escrito_por' AND vigente=1"
         ).fetchall()

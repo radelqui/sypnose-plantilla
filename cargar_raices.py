@@ -1,10 +1,6 @@
-"""TRASPASO-4 A1: carga 15 raíces linea_oferta desde el texto crudo y retira los PLAN-T-xx como molde.
+"""TRASPASO-4 A1: carga 15 raíces linea_oferta desde el texto crudo.
 
-Los PLAN-T-xx pasan a ser planes de la solución Coforge: reciben afirmación `plantilla_origen`
-apuntando a su linea_oferta correspondiente. No se borra nada (C8). Los linea_oferta no tienen
-requisito propio; las EARS quedan en los PLAN-T-xx (ahora planes de solución).
-
-    python3 cargar_raices.py --db ~/sypnose-f1/registry.db --txt oferta-coforge.txt [--dry-run]
+    python3 cargar_raices.py --db ~/sypnose-f1/registry.db [--dry-run]
 """
 from __future__ import annotations
 
@@ -12,7 +8,6 @@ import argparse
 import sqlite3
 import sys
 from datetime import datetime, timezone
-from difflib import SequenceMatcher
 from pathlib import Path
 
 from parser_oferta import extraer_lineas
@@ -38,20 +33,11 @@ def backup(conn: sqlite3.Connection, db_path: Path) -> Path:
     return destino
 
 
-def similitud(a: str, b: str) -> float:
-    a_norm = a.lower().rstrip(".").strip()
-    b_norm = b.lower().rstrip(".").strip()
-    if a_norm == b_norm:
-        return 1.0
-    return SequenceMatcher(None, a_norm, b_norm).ratio()
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
     ap.add_argument("--actor", default=ACTOR)
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--umbral", type=float, default=0.85, help="umbral de similitud para emparejar PLAN-T con línea")
     args = ap.parse_args()
 
     verificar_repo_limpio()
@@ -73,19 +59,12 @@ def main() -> None:
     if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (NODO_PLANTILLA,)).fetchone():
         sys.exit(f"[FALLO] el nodo {NODO_PLANTILLA} no existe; ejecuta cargar_molde.py primero")
 
-    planes_t = conn.execute(
-        "SELECT id, para FROM plan WHERE id LIKE 'PLAN-T-%' ORDER BY id"
-    ).fetchall()
-    print(f"[registro] {len(planes_t)} planes PLAN-T-xx existentes")
-
     if not args.dry_run:
         b = backup(conn, db_path)
         print(f"[backup] {b} ({b.stat().st_size} bytes)")
 
     altas = []
     existian = []
-    avisos = []
-    mapeo = []
 
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -134,44 +113,6 @@ def main() -> None:
                 )
                 altas.append(f"afirmacion seccion={l['seccion']} en {nodo_id}")
 
-        for plan_id, para_texto in planes_t:
-            if not para_texto:
-                avisos.append(f"{plan_id}: sin texto 'para', no se puede emparejar")
-                continue
-            mejor = max(lineas, key=lambda l: similitud(para_texto, l["texto"]))
-            score = similitud(para_texto, mejor["texto"])
-            nodo_linea = f"linea:coforge:{mejor['id']}"
-            if score < args.umbral:
-                avisos.append(f"{plan_id}: mejor match '{mejor['id']}' score={score:.2f} < umbral {args.umbral}")
-                continue
-
-            ya = conn.execute(
-                "SELECT id FROM afirmacion WHERE nodo_id=? AND campo='plantilla_origen' AND vigente=1",
-                (NODO_PLANTILLA,)
-            ).fetchone()
-
-            plan_nodo = plan_id
-            existente = conn.execute(
-                "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo='plantilla_origen' AND vigente=1",
-                (plan_nodo,)
-            ).fetchone()
-
-            if not existente:
-                conn.execute(
-                    "INSERT INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando) VALUES (?,?,?,?,?,?,?)",
-                    (NODO_PLANTILLA, f"plan_linea:{mejor['id']}", plan_id, "observado", FUENTE, args.actor, ahora()),
-                )
-                conn.execute(
-                    "INSERT INTO evento (cuando, actor, accion, nodo_id, plan_id, detalle) VALUES (?,?,?,?,?,?)",
-                    (ahora(), args.actor, "plantilla_origen_enlazada", nodo_linea, plan_id,
-                     f"{plan_id} cubre {mejor['id']} (score={score:.2f})"),
-                )
-                altas.append(f"plantilla_origen {plan_id} → {mejor['id']}")
-            else:
-                existian.append(f"plantilla_origen {plan_id}")
-
-            mapeo.append((plan_id, mejor["id"], score))
-
         conn.execute("ROLLBACK" if args.dry_run else "COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -180,12 +121,6 @@ def main() -> None:
     print(f"\naltas: {len(altas)} · ya existían: {len(existian)}")
     for a in altas:
         print(f"  + {a}")
-    for a in avisos:
-        print(f"  ! {a}")
-    if mapeo:
-        print(f"\n[mapeo PLAN-T → linea_oferta] ({len(mapeo)} pares)")
-        for pid, lid, sc in mapeo:
-            print(f"  {pid} → {lid} (sim={sc:.2f})")
     if args.dry_run:
         print("\n--dry-run: transacción deshecha, nada escrito")
         return
@@ -194,7 +129,6 @@ def main() -> None:
     print("\n[comprobación]")
     print("  nodos linea_oferta    :", q("SELECT COUNT(*) FROM nodo WHERE tipo='linea_oferta'"))
     print("  anclas a plantilla    :", q(f"SELECT COUNT(*) FROM ancla WHERE coleccion_id='{COLECCION}'"))
-    print("  afirmaciones plan_linea:", q(f"SELECT COUNT(*) FROM afirmacion WHERE nodo_id='{NODO_PLANTILLA}' AND campo LIKE 'plan_linea:%' AND vigente=1"))
     conn.close()
 
 
