@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import operator
 import re
 import sys
 from datetime import datetime
@@ -37,6 +38,32 @@ def suelto(texto: str) -> str:
     return re.sub(r"[\s'\"`\\]", "", texto)
 
 
+FALLO = re.compile(r"(?im)\b[1-9]\d*\s+(?:failed|errors?|failures?)\b|^\s*(?:FAILED|FAIL|ERROR)\b|^\s*error\s*:"
+                   r"|\b(?:parse|runtime|syntax|fatal)\s+error\b|Traceback \(most recent call last\)|\bexit code\s+[1-9]\d*|\bno tests ran\b")
+COMPARADOR = re.compile(r"^(≥|>=|≤|<=|==|=|>|<)?\s*(-?\d+(?:[.,]\d+)?)$")
+OPERACIONES = {"≥": operator.ge, ">=": operator.ge, "≤": operator.le, "<=": operator.le, ">": operator.gt, "<": operator.lt,
+               "=": operator.eq, "==": operator.eq, None: operator.eq}
+
+
+def esperado_de(comprobacion: str) -> str | None:
+    partes = FLECHA.split(comprobacion, maxsplit=1)
+    return partes[2].strip() if len(partes) == 3 and partes[2].strip() else None
+
+
+def cumple_esperado(esperado: str, salida: str) -> str | None:
+    """None si la salida real cumple lo esperado tras la flecha; si no, el motivo."""
+    m = COMPARADOR.match(esperado)
+    if not m:
+        return None if compacto(esperado).lower() in compacto(salida).lower() else f"la salida no muestra lo esperado «{esperado}»"
+    numeros = [l.strip() for l in salida.splitlines() if re.fullmatch(r"-?\d+(?:[.,]\d+)?", l.strip())]
+    if not numeros:
+        return f"la salida no trae un número que comparar con lo esperado {esperado}"
+    observado = float(numeros[-1].replace(",", "."))
+    if OPERACIONES[m.group(1)](observado, float(m.group(2).replace(",", "."))):
+        return None
+    return f"el resultado observado {numeros[-1]} no cumple lo esperado {esperado}"
+
+
 def validar(bloque: str, estado: dict):
     fallos = []
     comprobacion = estado["requisito"]["comprobacion"]
@@ -51,6 +78,15 @@ def validar(bloque: str, estado: dict):
         ultima = ejecuciones[-1]
         if ultima.get("interrumpido"):
             fallos.append("la última ejecución de la comprobación se interrumpió")
+        if ultima.get("exit_code") not in (0, None):
+            fallos.append(f"la última ejecución de la comprobación terminó con exit code {ultima['exit_code']}")
+        marca = FALLO.search(ultima["salida"])
+        if marca:
+            fallos.append(f"la salida real de la comprobación indica fallo («{marca.group(0).strip()}»)")
+        esperado = esperado_de(comprobacion)
+        motivo = cumple_esperado(esperado, ultima["salida"]) if esperado else None
+        if motivo:
+            fallos.append(motivo)
         lineas_bloque = {re.sub(r"^(salida|output)\s*:\s*", "", x.strip(), flags=re.I) for x in bloque.splitlines()}
         candidatas = [l.strip() for l in ultima["salida"].splitlines() if l.strip()][-15:]
         linea_salida = next((l for l in reversed(candidatas) if (l in bloque if len(l) >= 10 else l in lineas_bloque)), None)
