@@ -21,6 +21,7 @@ SHELLS_ANIDADAS = {"bash", "sh", "zsh"}
 CODIGO_EN_LINEA = {"python", "python3", "py", "node", "perl", "ruby", "pwsh", "powershell"}
 PISTAS_ESCRITURA = re.compile(r"open\(|write|unlink|remove|rmtree|mkdir|rename|replace\(|copy|move|Set-Content|Out-File|New-Item|appendFile", re.I)
 RUTA_EN_CODIGO = re.compile(r"""['"]((?:[A-Za-z]:[\\/]|/|\.\.[\\/]|~[\\/])[^'"]+)['"]""")
+GIT_C = "\x00git-C:"  # objetivo de `git -C <dir>`: opera en ese repositorio; los ficheros que cambie los revisa la auditoría git
 
 
 def norm(ruta: str, base: str) -> str:
@@ -45,10 +46,19 @@ def relativa(ruta_n: str, base_n: str) -> str:
     return os.path.relpath(ruta_n, base_n).replace("\\", "/")
 
 
+def _patron(glob: str) -> re.Pattern:
+    """Glob de permitidos: `**` a cualquier profundidad; `*` y `?` dentro de un solo nivel."""
+    return re.compile("".join({"**": ".*", "*": "[^/]*", "?": "[^/]"}.get(p, re.escape(p)) for p in re.split(r"(\*\*|\*|\?)", glob)) + r"\Z")
+
+
 def rel_permitida(rel: str, permitidos: list[str]) -> bool:
     rel = os.path.normcase(rel).replace("\\", "/")
     for a in permitidos:
         a_n = os.path.normcase(a.strip().strip("`")).replace("\\", "/")
+        if "*" in a_n or "?" in a_n:
+            if _patron(a_n.strip("/")).match(rel):
+                return True
+            continue
         es_dir = a_n.endswith("/")
         a_n = a_n.strip("/")
         if rel == a_n or (es_dir and rel.startswith(a_n + "/")):
@@ -56,20 +66,29 @@ def rel_permitida(rel: str, permitidos: list[str]) -> bool:
     return False
 
 
-def veredicto(ruta: str, cwd: str, worktree: str, permitidos: list[str], extra_permitidos: list[str] = ()) -> str | None:
-    """None si la escritura está permitida; si no, el motivo del bloqueo."""
+def veredicto(ruta: str, cwd: str, worktree: str, permitidos: list[str], extra_permitidos: list[str] = (),
+              worktrees_extra: list[dict] = ()) -> str | None:
+    """None si la escritura está permitida; si no, el motivo del bloqueo. Cada escritura se mide contra el worktree que la contiene (el del
+    chat o uno de worktrees_extra, el más interno) y sus permitidos. `git -C <dir>` vale dentro de cualquiera de ellos: los ficheros que
+    cambie los revisa la auditoría git."""
     if ruta.strip().lower() in INOCUOS:
         return None
-    r = norm(ruta, cwd)
+    es_git_c = ruta.startswith(GIT_C)
+    r = norm(ruta[len(GIT_C):] if es_git_c else ruta, cwd)
     for extra in extra_permitidos:
         if extra and dentro(r, norm(extra, cwd)):
             return None
-    wt = norm(worktree, cwd)
-    if not dentro(r, wt):
-        return f"{r} está fuera del worktree {wt}"
-    rel = relativa(r, wt)
-    if not rel_permitida(rel, permitidos):
-        return f"{rel} está fuera de archivos_permitidos {permitidos}"
+    zonas = [(norm(worktree, cwd), list(permitidos))] + [(norm(str(x["ruta"]), cwd), list(x.get("permitidos") or []))
+                                                        for x in worktrees_extra if x.get("ruta")]
+    candidatas = [(base, perm) for base, perm in zonas if dentro(r, base)]
+    if not candidatas:
+        return f"{r} está fuera del worktree {zonas[0][0]}" + (f" y de los worktrees extra {[z[0] for z in zonas[1:]]}" if len(zonas) > 1 else "")
+    base, perm = max(candidatas, key=lambda z: len(z[0]))
+    if es_git_c:
+        return None
+    rel = relativa(r, base)
+    if not rel_permitida(rel, perm):
+        return f"{rel} está fuera de archivos_permitidos {perm}" + ("" if base == zonas[0][0] else f" del worktree extra {base}")
     return None
 
 
@@ -117,10 +136,22 @@ def _segmento(seg: list[str], cwd: str, profundidad: int) -> tuple[list[str], st
     elif orden == "dd":
         objetivos += [a[3:] for a in args if a.startswith("of=")]
     elif orden == "git":
-        objetivos += [args[j + 1] for j, a in enumerate(args[:-1]) if a == "-C"]
-        sub = next((a for a in args if not a.startswith("-") and a not in objetivos), "")
-        if sub in ("clone", "worktree") and len(posicionales) >= 2:
-            objetivos.append(posicionales[-1])
+        # -C y --work-tree llevan el repositorio en el que opera git; -c, -b, -B y --reason llevan un valor que no es una ruta.
+        posic, j = [], 0
+        while j < len(args):
+            if args[j] in ("-C", "--work-tree") and j + 1 < len(args):
+                objetivos.append(GIT_C + args[j + 1])
+                j += 2
+            elif args[j] in ("-c", "-b", "-B", "--reason", "--git-dir"):
+                j += 2
+            else:
+                if not args[j].startswith("-"):
+                    posic.append(args[j])
+                j += 1
+        if posic[:1] == ["clone"] and len(posic) >= 3:
+            objetivos.append(posic[2])
+        elif posic[:2] == ["worktree", "add"] and len(posic) >= 3:
+            objetivos.append(posic[2])
     elif orden in SHELLS_ANIDADAS and "-c" in args and profundidad < 3:
         idx = args.index("-c")
         if idx + 1 < len(args):
@@ -164,7 +195,10 @@ def objetivos_shell(comando: str, cwd: str, profundidad: int = 0) -> list[str]:
         segmentos.append(segmento)
         for seg in segmentos:
             nuevos, cwd = _segmento(seg, cwd, profundidad)
-            objetivos += [n if os.path.isabs(n) or n.strip().lower() in INOCUOS else os.path.join(cwd, n) for n in nuevos]
+            # norm() entiende /c/… de Git Bash, ~ y rutas relativas al cwd de ese punto del comando. Con os.path.join, en Python 3.13
+            # (os.path.isabs('/c/…') es False) /c/MICD/… acababa en C:\c\MICD\… y ~/x quedaba dentro del worktree.
+            objetivos += [n if n.strip().lower() in INOCUOS else GIT_C + norm(n[len(GIT_C):], cwd) if n.startswith(GIT_C) else norm(n, cwd)
+                          for n in nuevos]
     return objetivos
 
 
