@@ -219,7 +219,7 @@ def validar_fuente(fuente: str, conn=None) -> tuple[bool, str]:
             return True, "ok"
         return False, f"plan {plan_id} not found in DB"
 
-    # 07-verificador/FILE#label → file must exist and contain literal "#label"
+    # 07-verificador/FILE#label → file must exist and contain ancla:<label> token
     m = RE_VERIFICADOR.match(fuente)
     if m:
         filepath = PROYECTO_DIR / "07-verificador" / m.group(1)
@@ -230,9 +230,10 @@ def validar_fuente(fuente: str, conn=None) -> tuple[bool, str]:
             text = filepath.read_text(encoding="utf-8")
         except Exception:
             return False, f"cannot read {filepath.name}"
-        if f"#{label}" in text:
+        ancla_pat = re.compile(r"ancla:" + re.escape(label) + r"(\s|$)")
+        if ancla_pat.search(text):
             return True, "ok"
-        return False, f"label #{label} not found in {filepath.name}"
+        return False, f"ancla:{label} not found in {filepath.name}"
 
     # 07-verificador/FILE (bare, no #section) → file must exist
     m = RE_VERIFICADOR_BARE.match(fuente)
