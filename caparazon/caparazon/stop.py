@@ -11,6 +11,7 @@ import shlex
 import sys
 from datetime import datetime
 
+import brief
 import cerco
 import comun
 from brief import FORMATO_ENTREGA
@@ -245,10 +246,20 @@ def rechazar(cfg: dict, estado: dict, motivo: str, primero: bool) -> None:
     comun.bloquear(f"CIERRE IMPEDIDO: {motivo}.{nota}\n{FORMATO_ENTREGA}")
 
 
-def entregar(cfg: dict, estado: dict, bloque: str, primero: bool) -> None:
+def entregar(cfg: dict, estado: dict, bloque: str, primero: bool, entrada: dict) -> None:
+    # B12 (lead, 15-sep): una entrega es un punto de juicio y se valida contra el requisito vigente del registro, nunca contra la foto.
+    try:
+        vigente, cambios = brief.refrescar_trabajo(estado, entrada, cfg)
+    except comun.RegistroCaido as e:
+        comun.encolar(estado["session_id"], comun.ops_bloqueo(estado["actor"], "registro_caido", estado["plan"]["id"],
+                                                             f"ENTREGA de la tarea {estado['tarea']['id']} sin confirmar la comprobación vigente: {e}"))
+        rechazar(cfg, estado, "no se pudo confirmar la comprobación vigente: registro caído; reintenta la ENTREGA cuando vuelva", primero)
+    if vigente.get("abortado") or (vigente.get("tarea") or {}).get("id") != estado["tarea"]["id"]:
+        rechazar(cfg, estado, "ENTREGA rechazada: " + "; ".join(cambios or ["la tarea ya no está abierta en el registro"]), primero)
+    estado = vigente
     fallos, leccion, linea_salida, ultima = validar(bloque, estado, cfg)
     if fallos:
-        rechazar(cfg, estado, "ENTREGA rechazada: " + "; ".join(fallos), primero)
+        rechazar(cfg, estado, "ENTREGA rechazada: " + "; ".join(cambios + fallos), primero)
     sid, plan_id, actor, tarea = estado["session_id"], estado["plan"]["id"], estado["actor"], estado["tarea"]
     comprobacion = estado["requisito"]["comprobacion"]
     clave = f"leccion-linea-{estado.get('linea') or 'SIN-LINEA'}-{datetime.now():%d%m%y-%H%M}"
@@ -289,7 +300,7 @@ def main() -> None:
     if marca:
         bloque = texto[marca.start():]
         if not any(x.get("huella") == huella(bloque) for x in estado.get("entregas", [])):
-            entregar(cfg, estado, bloque, primero)
+            entregar(cfg, estado, bloque, primero, entrada)
         terminar(enviar(cfg, sid)[1])
     ultima_entrega = max((x["cuando"] for x in estado.get("entregas", [])), default="")
     pendientes = [x for x in estado.get("escrituras", []) if x["cuando"] > ultima_entrega]
