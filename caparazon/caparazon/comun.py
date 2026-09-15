@@ -6,6 +6,7 @@ import contextlib
 import inspect
 import json
 import os
+import posixpath
 import re
 import sqlite3
 import subprocess
@@ -22,6 +23,9 @@ ESTADO_DIR = DIR / "estado"
 COLA_DIR = DIR / "cola"
 CERROJO = ESTADO_DIR / ".cerrojo"
 SIN_VENTANA = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+MARCADOR_INSTALACION = DIR / "INSTALADO"
+PUERTO_KB_TUNEL = 18791
+_cwd_sesion: str | None = None
 
 for _flujo in (sys.stdout, sys.stderr):
     with contextlib.suppress(Exception):
@@ -36,13 +40,30 @@ class RegistroRechazo(Exception):
     """El registro respondió pero rechazó la escritura (raíl o error de datos)."""
 
 
+class ModoPrueba(Exception):
+    """Escritura en vivo pedida sin las tres condiciones del modo real: no sale nada y la cola se conserva."""
+
+
 def ahora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def leer_stdin() -> dict:
+    """Entrada JSON del hook. Guarda su cwd: el modo real exige que la sesión trabaje en la carpeta instalada o en su worktree."""
+    global _cwd_sesion
     datos = sys.stdin.buffer.read().decode("utf-8", errors="replace")
-    return json.loads(datos) if datos.strip() else {}
+    entrada = json.loads(datos) if datos.strip() else {}
+    if isinstance(entrada, dict) and entrada.get("cwd"):
+        _cwd_sesion = str(entrada["cwd"])
+    return entrada
+
+
+def ruta_remota(ruta: str, destino: str) -> str:
+    """Ruta en el servidor del registro con '~' expandido al home del usuario de `usuario@host`: config, comandos y escritura usan la misma."""
+    usuario = destino.split("@", 1)[0] if "@" in destino else ""
+    if usuario and (ruta == "~" or ruta.startswith("~/")):
+        ruta = ("/root" if usuario == "root" else f"/home/{usuario}") + ruta[1:]
+    return posixpath.normpath(ruta) if ruta else ruta
 
 
 def config() -> dict:
@@ -50,6 +71,9 @@ def config() -> dict:
     cfg["registro_url"] = (os.environ.get("SYPNOSE_REGISTRO_URL") or cfg.get("registro_url") or "http://127.0.0.1:7101").rstrip("/")
     cfg["kb_url"] = (os.environ.get("SYPNOSE_KB_URL") or cfg.get("kb_url") or "http://127.0.0.1:18791").rstrip("/")
     cfg["escritura"] = os.environ.get("SYPNOSE_REGISTRO_ESCRITURA") or cfg.get("escritura") or "ssh"
+    ssh = cfg.get("ssh")
+    if isinstance(ssh, dict) and ssh.get("db"):
+        ssh["db"] = ruta_remota(str(ssh["db"]), str(ssh.get("destino") or ""))
     return cfg
 
 
@@ -206,6 +230,57 @@ def leer_registro(cfg: dict, ruta: str):
         raise RegistroCaido(f"lectura {ruta} falló ({type(e).__name__}: {e})")
 
 
+# ── modo real: barrera de las escrituras en vivo ─────────────────────────────
+
+def motivo_modo_prueba(cfg: dict) -> str | None:
+    """None si este proceso puede escribir en vivo; si no, qué falta. Decisión del lead tras el incidente del 15-sep 12:34Z, en el que un
+    arnés con escritura ssh escribió en el registro vivo: hacen falta SYPNOSE_MODO=real, que estos módulos sean la instalación de la
+    carpeta del config con el marcador INSTALADO (solo lo escribe instalar_caparazon.py) y que la sesión trabaje en esa carpeta o su worktree."""
+    import cerco
+    faltan = []
+    modo = os.environ.get("SYPNOSE_MODO")
+    if modo != "real":
+        faltan.append(f"SYPNOSE_MODO={modo or '(sin definir)'}, no real")
+    carpeta, worktree = str(cfg.get("carpeta_ruta") or ""), str(cfg.get("worktree") or "")
+    aqui = cerco.norm(str(DIR), str(DIR))
+    if not carpeta or cerco.norm(str(Path(carpeta) / ".claude" / "caparazon"), aqui) != aqui:
+        faltan.append(f"estos módulos ({DIR}) no son la instalación de {carpeta or 'la carpeta del config'}")
+    elif not MARCADOR_INSTALACION.is_file():
+        faltan.append(f"no existe el marcador {MARCADOR_INSTALACION}, que solo escribe instalar_caparazon.py")
+    else:
+        try:
+            del_marcador = str(json.loads(MARCADOR_INSTALACION.read_text(encoding="utf-8")).get("carpeta_ruta") or "")
+        except (OSError, ValueError, AttributeError):
+            del_marcador = ""
+        if not del_marcador or cerco.norm(del_marcador, aqui) != cerco.norm(carpeta, aqui):
+            faltan.append(f"el marcador {MARCADOR_INSTALACION} no es de {carpeta}")
+    cwd = _cwd_sesion or os.getcwd()
+    cwd_n = cerco.norm(cwd, os.getcwd())
+    if not any(cerco.dentro(cwd_n, cerco.norm(b, aqui)) for b in (carpeta, worktree) if b):
+        faltan.append(f"la sesión trabaja en {cwd}, fuera de {carpeta or 'la carpeta del config'} y de su worktree")
+    return "; ".join(faltan) or None
+
+
+def kb_en_vivo() -> bool:
+    """Solo es KB de pruebas una URL local explícita (SYPNOSE_KB_URL a 127.0.0.1 o localhost, fuera del puerto del túnel); lo demás es la real."""
+    u = urllib.parse.urlparse(os.environ.get("SYPNOSE_KB_URL") or "")
+    try:
+        puerto = u.port
+    except ValueError:
+        puerto = None
+    return not (u.hostname in ("127.0.0.1", "localhost") and puerto and puerto != PUERTO_KB_TUNEL)
+
+
+def destinos_vivos(cfg: dict, ops: list[dict]) -> list[str]:
+    """Destinos reales de un envío: el registro por ssh (todo lo que no es un sqlite local de pruebas) y la KB real."""
+    vivos = []
+    if not str(cfg["escritura"]).startswith("sqlite:") and any(o["op"] not in ("kb_guardar", "consulta") for o in ops):
+        vivos.append(f"el registro por ssh ({(cfg.get('ssh') or {}).get('destino')})")
+    if kb_en_vivo() and any(o["op"] == "kb_guardar" for o in ops):
+        vivos.append(f"la KB {cfg['kb_url']}")
+    return vivos
+
+
 def aplicar_ops(c, ops):
     """Idempotente: un evento con la misma (cuando, actor, accion, plan_id, detalle) no se repite; así reenviar la cola es seguro."""
     resultados, ultimo_evento = [], None
@@ -287,6 +362,10 @@ def escribir(cfg: dict, ops: list[dict]) -> dict:
             raise RegistroCaido(f"sqlite local no disponible: {e}")
         except Exception as e:
             raise RegistroRechazo(f"{type(e).__name__}: {e}")
+    if any(o["op"] != "consulta" for o in ops):
+        falta = motivo_modo_prueba(cfg)
+        if falta:
+            raise ModoPrueba(f"escritura en vivo en el registro rechazada (modo prueba): {falta}")
     payload = base64.b64encode(json.dumps(ops, ensure_ascii=False).encode("utf-8")).decode("ascii")
     programa = ("import base64, json, sys\n" + inspect.getsource(aplicar_ops) + "\n" + inspect.getsource(ejecutar_lote) + "\n"
                 f"ops = json.loads(base64.b64decode('{payload}').decode('utf-8'))\n"
@@ -371,6 +450,9 @@ def ops_en_cola(sid: str) -> int:
 
 
 def kb_guardar(cfg: dict, op: dict) -> None:
+    falta = motivo_modo_prueba(cfg) if kb_en_vivo() else None
+    if falta:
+        raise ModoPrueba(f"escritura en vivo en la KB rechazada (modo prueba): {falta}")
     try:
         http_json(cfg["kb_url"] + "/api/save", "POST",
                   {"key": op["clave"], "value": op["valor"], "category": op["categoria"], "project": op["proyecto"]}, espera=10)
@@ -419,6 +501,10 @@ def vaciar(cfg: dict, sid: str, motivo: str, esperar: float = 0.0) -> dict:
                                 f"registro SYPNOSE sin respuesta desde {fallo['desde']} (último fallo {fallo['ultimo']}, {fallo['intentos']} envíos fallidos"
                                 f"{', incluido el del cierre del turno' if fallo.get('en_stop') else ''}); {len(ops)} operaciones retenidas en la cola "
                                 f"local y enviadas al volver; último motivo: {fallo['motivo']}", cuando=fallo["ultimo"])
+        vivos = destinos_vivos(cfg, ops + caida)
+        falta = motivo_modo_prueba(cfg) if vivos else None
+        if falta:
+            return {"estado": "prueba", "sesion": sid, "motivo": falta, "destinos": vivos, "pendientes": len(ops), "cola": str(ruta_cola(sid))}
         try:
             salud(cfg)
             for o in ops:
@@ -468,6 +554,10 @@ def vaciar_todas(cfg: dict, motivo: str) -> list[dict]:
 
 
 def texto_fallo_cola(cfg: dict, r: dict) -> str:
+    if r["estado"] == "prueba":
+        return (f"MODO PRUEBA: {r['pendientes']} operaciones para {' y '.join(r['destinos'])} se quedan en la cola local ({r['cola']}). "
+                "El caparazón solo escribe en vivo con SYPNOSE_MODO=real, instalado con instalar_caparazon.py (marcador INSTALADO) y con la "
+                f"sesión en su carpeta o su worktree. Falta: {r['motivo']}.")
     if r["estado"] == "rechazo":
         return f"EL REGISTRO SYPNOSE RECHAZÓ {r['rechazadas']} lote(s) de la cola (guardados en {r['fichero_rechazos']}); el resto se envió."
     if r["estado"] != "fallo":
