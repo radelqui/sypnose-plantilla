@@ -26,6 +26,10 @@ def main() -> None:
     contexto = (f"Requisito vigente de la tarea {t['id']} ({p['id']}/{r['ref']}), texto literal del registro SYPNOSE: {r['ears']}\n"
                 f"Comprobación: {r['comprobacion']}\n"
                 f"Archivos permitidos dentro de {estado['worktree']}: {', '.join(estado['permitidos'])}")
+    if not estado.get("brief_entregado"):
+        # Sesión sin SessionStart (abierta antes de instalar el caparazón): el brief completo llega con el primer prompt, una sola vez.
+        contexto = f"{estado['brief']}\n\n{contexto}"
+        comun.actualizar_estado(sid, lambda e: e.update(brief_entregado=comun.ahora(), brief_via="UserPromptSubmit"))
     salida = {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": contexto}}
     aviso = comun.aviso_cola(cfg, sid)
     if aviso:
