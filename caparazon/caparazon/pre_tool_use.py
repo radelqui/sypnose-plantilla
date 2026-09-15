@@ -15,8 +15,18 @@ def main() -> None:
     datos = entrada.get("tool_input") or {}
     cwd = entrada.get("cwd") or cfg["carpeta_ruta"]
     estado = comun.asegurar_estado(entrada, cfg)
-    if estado.get("abortado"):
+    tipo = comun.tipo_aborto(estado)
+    if tipo == "registro_caido":
         comun.bloquear(f"CAPARAZÓN ABORTADO: {herramienta} bloqueada.\n{estado['motivo']}")
+    if tipo == "sin_tarea":
+        # B10 (lead, 15-sep): sin tarea se puede leer; escribir ficheros o ejecutar lo que cambie algo se bloquea con el aviso.
+        if herramienta in ("Bash", "PowerShell"):
+            lectura = cerco.solo_lectura(datos.get("command", ""))
+        else:
+            lectura = herramienta not in ("Edit", "Write", "MultiEdit", "NotebookEdit")
+        if lectura:
+            sys.exit(0)
+        comun.bloquear(f"{comun.aviso_sin_tarea(estado, cfg)}\n({herramienta} bloqueada. Detalle: {estado['motivo']})")
     extra = [entrada["scratchpad_dir"]] if entrada.get("scratchpad_dir") else []
     extras_wt = cfg.get("worktrees_extra") or []
     fallos = []

@@ -11,8 +11,13 @@ def main() -> None:
     estado = comun.asegurar_estado(entrada, cfg)
     if estado.get("abortado"):
         estado = brief.construir_estado(entrada, cfg)
-    if estado.get("abortado"):
+    if comun.tipo_aborto(estado) == "registro_caido":
         comun.bloquear(f"CAPARAZÓN ABORTADO: prompt bloqueado.\n{estado['motivo']}")
+    if comun.tipo_aborto(estado) == "sin_tarea":
+        # B10 (lead, 15-sep): un humano nunca se queda sin poder hablar con su chat; el prompt pasa con el aviso.
+        aviso = comun.aviso_sin_tarea(estado, cfg)
+        comun.salir_json({"systemMessage": aviso, "hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                                                                         "additionalContext": f"{aviso}\nDetalle: {estado['motivo']}"}})
     sid = estado["session_id"]
     if estado.get("modelo") in (None, "desconocido"):
         observado = comun.modelo_en_transcript(entrada.get("transcript_path"))

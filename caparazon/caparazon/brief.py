@@ -163,8 +163,10 @@ def envio_inicial(cfg: dict) -> str:
     return " · ".join(p for p in partes if p)
 
 
-def abortar(estado: dict, cfg: dict, motivo: str, plan_id: str | None, nota_cola: str = "") -> dict:
-    estado.update(abortado=True, motivo=motivo, plan={"id": plan_id} if plan_id else None, tarea=None, requisito=None)
+def abortar(estado: dict, cfg: dict, motivo: str, plan_id: str | None, nota_cola: str = "", tipo: str = "sin_tarea") -> dict:
+    """Sesión sin trabajo. 'registro_caido': no se pudo verificar el plan y se bloquean prompts y escrituras. 'sin_tarea' (B10, lead
+    15-sep): el humano puede hablar con su chat y el chat puede leer; solo se bloquea escribir y ejecutar lo que cambie algo."""
+    estado.update(abortado=True, abortado_tipo=tipo, motivo=motivo, plan={"id": plan_id} if plan_id else None, tarea=None, requisito=None)
     sid = estado["session_id"]
     if not estado.get("bloqueo_brief_emitido"):
         comun.encolar(sid, comun.ops_bloqueo(estado["actor"], "brief", plan_id, f"sesión {sid[:8]} sin trabajo permitido: {motivo}"))
@@ -172,10 +174,14 @@ def abortar(estado: dict, cfg: dict, motivo: str, plan_id: str | None, nota_cola
         r = comun.vaciar(cfg, sid, "arranque")
         nota_cola = unir_nota(nota_cola, comun.texto_fallo_cola(cfg, r))
     estado["nota_cola"] = nota_cola
-    estado["brief"] = (f"═══ BRIEF CAPARAZÓN · {cfg['carpeta']} · ABORTADO ═══\nActor: {estado['actor']}\nMotivo: {motivo}\n"
+    if tipo == "registro_caido":
+        titulo, regla = "ABORTADO", ("Mientras el registro no responda, el caparazón bloquea tus prompts y todas las escrituras "
+                                     "(Edit/Write/Bash/PowerShell). Cada prompt nuevo vuelve a consultar el registro.")
+    else:
+        titulo, regla = "SIN TAREA", f"{comun.aviso_sin_tarea(estado, cfg)} Cada prompt nuevo vuelve a consultar el registro."
+    estado["brief"] = (f"═══ BRIEF CAPARAZÓN · {cfg['carpeta']} · {titulo} ═══\nActor: {estado['actor']}\nMotivo: {motivo}\n"
                        + (f"Cola del caparazón: {nota_cola}\n" if nota_cola else "")
-                       + "Mientras siga abortado, el caparazón bloquea tus prompts y todas las escrituras (Edit/Write/Bash/PowerShell). "
-                       f"Cada prompt nuevo vuelve a consultar el registro.\nTúnel del registro: {comun.comando_tunel(cfg)}")
+                       + f"{regla}\nTúnel del registro: {comun.comando_tunel(cfg)}")
     with comun.cerrojo():
         comun.guardar_estado(estado)
     return estado
@@ -203,7 +209,7 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
         encontrado, candidatos, sin_trabajo = buscar_plan(cfg)
     except comun.RegistroCaido as e:
         return abortar(estado, cfg, f"REGISTRO SYPNOSE CAÍDO: no se puede verificar el plan ({e})",
-                       comun.plan_de(previo or comun.ultimo_estado(), cfg), nota_cola)
+                       comun.plan_de(previo or comun.ultimo_estado(), cfg), nota_cola, tipo="registro_caido")
     if not encontrado:
         if candidatos:
             p = candidatos[0][0]["plan"]
@@ -289,9 +295,11 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
 
 def main() -> None:
     entrada = comun.leer_stdin()
-    estado = construir_estado(entrada, comun.config())
+    cfg = comun.config()
+    estado = construir_estado(entrada, cfg)
     if estado["abortado"]:
-        aviso = f"Caparazón ABORTADO: {estado['motivo']}"
+        aviso = (f"Caparazón ABORTADO: {estado['motivo']}" if comun.tipo_aborto(estado) == "registro_caido"
+                 else f"Caparazón sin tarea: {comun.aviso_sin_tarea(estado, cfg)}")
     else:
         aviso = f"Caparazón: {estado['plan']['id']} · tarea {estado['tarea']['id']} · cerco {', '.join(estado['permitidos'])}"
     if estado.get("nota_cola"):
