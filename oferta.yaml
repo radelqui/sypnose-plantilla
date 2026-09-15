@@ -192,14 +192,14 @@ roles_por_linea:
   T02: {rol: 04-agentes, modelo: claude-sonnet-5}
   T03: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T04: {rol: 06-frontend, modelo: claude-sonnet-5}
-  T05: {rol: 01-git-cicd, modelo: claude-sonnet-5}
+  T05: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T06: {rol: 07-verificador, modelo: claude-opus-5}
   T07: {rol: 01-git-cicd, modelo: claude-sonnet-5}
   T08: {rol: 03-datos-rag, modelo: claude-sonnet-5}
   T09: {rol: 05-arquitecto-sypnose, modelo: claude-opus-5}
-  T10: {rol: 04-agentes, modelo: claude-sonnet-5}
+  T10: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T11: {rol: 06-frontend, modelo: claude-sonnet-5}
   T12: {rol: 04-agentes, modelo: claude-sonnet-5}
   T13: {rol: 01-git-cicd, modelo: claude-sonnet-5}
   T14: {rol: 01-git-cicd, modelo: claude-sonnet-5}
-  T15: {rol: 05-arquitecto-sypnose, modelo: claude-opus-5}
+  T15: {rol: 02-backend-api, modelo: claude-sonnet-5}
