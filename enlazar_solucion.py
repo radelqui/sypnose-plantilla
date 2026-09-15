@@ -448,9 +448,9 @@ def calcular_certeza(conn, plan_id: str) -> tuple[str, list[str]]:
     razones = []
     alguna_falla = False
     for _rid, fuente, dice in filas:
-        if re.search(r"\bPARCIAL\b", dice, re.IGNORECASE):
+        if dice.upper().startswith("PARCIAL") or "estado: parcial" in dice.lower():
             alguna_falla = True
-            razones.append(f"dice contiene PARCIAL: {fuente}")
+            razones.append(f"dice PARCIAL explícito: {fuente}")
         valida, motivo = validar_fuente(fuente, conn, plan_id)
         if not valida:
             alguna_falla = True
