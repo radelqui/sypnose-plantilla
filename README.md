@@ -47,6 +47,8 @@ escritura va por un script de este directorio que pasa la barrera
 | `calcular_coste.py` | coste por modelo |
 | `instanciar.py` | instanciación de planes |
 | `cargar_molde.py` | versiones del molde |
+| `cargar_spec.py` | afirmaciones descripcion/por_que desde spec.md |
+| `crear_tarea.py` | tareas (con validación plan/agente/rol/idempotencia) |
 
 ## historico/
 
