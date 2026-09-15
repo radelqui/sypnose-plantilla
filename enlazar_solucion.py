@@ -71,17 +71,17 @@ def nodo_id_para_ruta(ruta: str) -> str:
     return f"mod:{REPO_SLUG}:{ruta}"
 
 
-def ruta_existe_en_repo(ruta: str) -> bool:
-    """Checks whether a file or directory exists at HEAD in the rag-banking-agent repo."""
+def ruta_existe_en_repo(ruta: str, sha: str) -> bool:
+    """Checks whether a file or directory exists at a pinned sha in the rag-banking-agent repo."""
     if ruta.endswith("/**"):
         dir_path = ruta[:-3]
         r = subprocess.run(
-            ["git", "-C", str(REPO_RAG), "ls-tree", "--name-only", "HEAD", dir_path + "/"],
+            ["git", "-C", str(REPO_RAG), "ls-tree", "--name-only", sha, dir_path + "/"],
             capture_output=True, text=True, timeout=10,
         )
         return r.returncode == 0 and bool(r.stdout.strip())
     r = subprocess.run(
-        ["git", "-C", str(REPO_RAG), "cat-file", "-e", f"HEAD:{ruta}"],
+        ["git", "-C", str(REPO_RAG), "cat-file", "-e", f"{sha}:{ruta}"],
         capture_output=True, text=True, timeout=10,
     )
     return r.returncode == 0
@@ -319,7 +319,28 @@ def calcular_certeza(conn, plan_id: str) -> tuple[str, list[str]]:
         "SELECT fuente FROM evidencia WHERE plan_id=? AND fuente LIKE 'INVALIDA:%'",
         (plan_id,),
     ).fetchall():
-        target = row[0].replace("INVALIDA:", "", 1)
+        inv_fuente = row[0]
+        target = inv_fuente.replace("INVALIDA:", "", 1)
+        autorizado = conn.execute(
+            "SELECT actor FROM evento "
+            "WHERE accion='evidencia_invalidada' AND plan_id=? AND detalle=?",
+            (plan_id, inv_fuente),
+        ).fetchall()
+        tiene_autorizacion = False
+        for (actor_inv,) in autorizado:
+            if actor_inv.startswith("H:"):
+                if conn.execute(
+                    "SELECT 1 FROM actor WHERE id=? AND clase='humano'",
+                    (actor_inv,),
+                ).fetchone():
+                    tiene_autorizacion = True
+                    break
+            elif actor_inv.startswith("IA:07-verificador:") and actor07_valido(actor_inv, conn):
+                tiene_autorizacion = True
+                break
+        if not tiene_autorizacion:
+            print(f"  [WARN] {inv_fuente} ignorada: sin evento evidencia_invalidada autorizado")
+            continue
         m_rowid = re.match(r"^rowid:(\d+)$", target)
         if m_rowid:
             invalidas_rowid.add(int(m_rowid.group(1)))
@@ -354,6 +375,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
     ap.add_argument("--actor", default=ACTOR)
+    ap.add_argument("--rag-sha", help="pinned sha for rag-banking-agent (default: HEAD)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -362,6 +384,18 @@ def main() -> None:
     if not REPO_RAG.exists() or not (REPO_RAG / ".git").exists():
         sys.exit(f"[FALLO] repo rag-banking-agent no encontrado en {REPO_RAG}; "
                  "necesario para validar fuentes file@sha")
+
+    if args.rag_sha:
+        rag_sha = args.rag_sha
+    else:
+        r = subprocess.run(
+            ["git", "-C", str(REPO_RAG), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0 or not r.stdout.strip():
+            sys.exit("[FALLO] no se pudo resolver HEAD de rag-banking-agent")
+        rag_sha = r.stdout.strip()
+    print(f"[rag-sha] {rag_sha[:12]}")
 
     plan_por_linea, cubre_map, archivos_por_linea = cargar_oferta_yaml()
     cubre_set = set(cubre_map.keys())
@@ -405,13 +439,12 @@ def main() -> None:
             print(f"  [FALLO] {e}")
         sys.exit(f"[FALLO] {len(errores)} líneas con yaml declarando más certeza que la calculada")
 
-    # Regla lead: yaml declara menos que calculado → usar calculado + evento
+    # Yaml es techo: calculado > yaml → WARN + mantener yaml (subir requiere humano tocando yaml)
     for lid in sorted(cubre_set):
         yaml_decl = cubre_map[lid]
         calc = certeza_calculada[lid]
         if CERTEZA_ORDEN.get(yaml_decl, 0) < CERTEZA_ORDEN.get(calc, 0):
-            print(f"  [INFO] {lid}: yaml={yaml_decl} < calculado={calc}, se usará {calc}")
-            cubre_map[lid] = calc
+            print(f"  [WARN] {lid}: calculado={calc} > yaml={yaml_decl}, se mantiene yaml (techo)")
 
     lineas = conn.execute(
         "SELECT id FROM nodo WHERE tipo='linea_oferta' ORDER BY id"
@@ -498,7 +531,7 @@ def main() -> None:
             for ruta in rutas:
                 nid = nodo_id_para_ruta(ruta)
                 esperadas_mod.add((nid, linea_id))
-                existe = ruta_existe_en_repo(ruta)
+                existe = ruta_existe_en_repo(ruta, rag_sha)
                 file_certeza = "observado" if existe else "propuesto"
                 certeza = file_certeza if CERTEZA_ORDEN.get(file_certeza, 0) <= CERTEZA_ORDEN.get(sol_certeza, 0) else sol_certeza
                 if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (nid,)).fetchone():
@@ -541,8 +574,9 @@ def main() -> None:
         mod_en_bd = conn.execute(
             "SELECT origen, destino, certeza FROM relacion "
             "WHERE tipo='cubre' AND destino LIKE 'linea:coforge:%' "
-            "AND origen != ? AND (origen LIKE 'mod:%' OR origen LIKE 'dir:%')",
-            (SOL_ID,),
+            "AND origen != ? AND (origen LIKE 'mod:%' OR origen LIKE 'dir:%') "
+            "AND fuente = ?",
+            (SOL_ID, FUENTE),
         ).fetchall()
         for origen, destino, certeza_bd in mod_en_bd:
             if (origen, destino) not in esperadas_mod and certeza_bd != "propuesto":
@@ -597,6 +631,11 @@ def main() -> None:
             altas.append(f"afirmacion tecnico:repo_url={REPO_URL}")
         else:
             existian.append("afirmacion tecnico:repo_url")
+
+        if afirmar(conn, args.actor, SOL_ID, "tecnico:rag_sha", rag_sha):
+            altas.append(f"afirmacion tecnico:rag_sha={rag_sha[:12]}")
+        else:
+            existian.append("afirmacion tecnico:rag_sha")
 
         if afirmar(conn, args.actor, NODO_PLANTILLA, "oferta_titulo", OFERTA_TITULO):
             altas.append(f"afirmacion oferta_titulo en {NODO_PLANTILLA}")
