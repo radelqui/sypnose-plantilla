@@ -341,6 +341,27 @@ def main() -> None:
               "last_assistant_message": f"ENTREGA\nComprobación: {consulta} → ≥1\nSalida: 1\nLECCIÓN: R0 se cierra registrando R1+ desde el rol, no copiándolo"}, env,
              lambda rc, o, e: rc == 0 and "ENTREGA registrada en SYPNOSE" in o,
              despues=lambda: comprobar(f"registro tarea_entregada={reg.cuenta('tarea_entregada')}", reg.cuenta("tarea_entregada") == 2))
+        detalles = lambda accion: [f[0] or "" for f in reg.filas("SELECT detalle FROM evento WHERE actor=? AND accion=? AND cuando>=?", (args.actor, accion, inicio))]
+        caso("B6.11 PostToolUse: nueva escritura en la tarea 33 después de su entrega", dir_capa, "post_tool_use.py",
+             {**post, "session_id": sid_r0, "tool_name": "Write", "tool_input": {"file_path": permitido, "content": "..."},
+              "tool_response": {"filePath": permitido, "type": "update"}}, env, lambda rc, o, e: rc == 0)
+        caso("B6.12 Stop con stop_hook_active=true y sin ENTREGA: no vuelve a bloquear, cierra con aviso y bloqueo:entrega_incompleta", dir_capa, "stop.py",
+             {**stop, "session_id": sid_r0, "stop_hook_active": True, "last_assistant_message": "No consigo la salida de la comprobación."}, env,
+             lambda rc, o, e: rc == 0 and "CIERRE SIN ENTREGA VÁLIDA" in o and "bloqueo:entrega_incompleta" in o,
+             despues=lambda: comprobar(f"registro bloqueo:entrega_incompleta={reg.cuenta('bloqueo:entrega_incompleta')} "
+                                       f"evidencias={reg.evidencias('bloqueo:entrega_incompleta')}",
+                                       reg.cuenta("bloqueo:entrega_incompleta") == 1 and reg.evidencias("bloqueo:entrega_incompleta") == 1))
+        caso("B6.13 Stop: la salida legítima BLOQUEADO: deja cerrar al primer intento y queda para Carlos", dir_capa, "stop.py",
+             {**stop, "session_id": sid_r0, "last_assistant_message": "No puedo seguir.\nBLOQUEADO: sin permiso para registrar R1 en el registro"}, env,
+             lambda rc, o, e: rc == 0 and "registrado para Carlos" in o,
+             despues=lambda: comprobar(f"registro pregunta_humano={detalles('pregunta_humano')}",
+                                       any(d.startswith("BLOQUEADO:") for d in detalles("pregunta_humano"))))
+        caso("B6.14 Stop con stop_hook_active=true y ENTREGA inventada: cierra como entrega incompleta, no como entregada", dir_capa, "stop.py",
+             {**stop, "session_id": sid_r0, "stop_hook_active": True,
+              "last_assistant_message": f"ENTREGA\nComprobación: {consulta} → ≥1\nSalida: 7\nLECCIÓN: prueba"}, env,
+             lambda rc, o, e: rc == 0 and "CIERRE SIN ENTREGA VÁLIDA" in o,
+             despues=lambda: comprobar(f"registro bloqueo:entrega_incompleta={reg.cuenta('bloqueo:entrega_incompleta')} tarea_entregada={reg.cuenta('tarea_entregada')}",
+                                       reg.cuenta("bloqueo:entrega_incompleta") == 2 and reg.cuenta("tarea_entregada") == 2))
 
     print(f"\n══ Evidencia en el registro (actor {args.actor}, desde {inicio}) ══")
     if db:
