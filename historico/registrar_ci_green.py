@@ -20,7 +20,9 @@ from barrera import backup_registro, verificar_canonicos_registrados, verificar_
 
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-4-6"
 EVENTO_GUARDIA = "ci_green_34983669221"
+EVENTO_GUARDIA_INV = "ci_green_invalidar_old_run"
 GH_RUN = "gh:run:34983669221"
+GH_RUN_OLD = "gh:run:34870628891"
 PLANES = ["PLAN-CS-T07", "PLAN-CS-T14"]
 DICE = "CI main green: test success, build-and-push (trivy) success, deploy WAITING (aprobación humana)"
 
@@ -43,8 +45,9 @@ def main() -> None:
     conn.execute("PRAGMA journal_mode=WAL")
 
     ya = conn.execute("SELECT 1 FROM evento WHERE accion=?", (EVENTO_GUARDIA,)).fetchone()
-    if ya:
-        print(f"[idempotente] evento {EVENTO_GUARDIA} ya existe. 0 cambios.")
+    ya_inv = conn.execute("SELECT 1 FROM evento WHERE accion=?", (EVENTO_GUARDIA_INV,)).fetchone()
+    if ya and ya_inv:
+        print(f"[idempotente] eventos {EVENTO_GUARDIA} + {EVENTO_GUARDIA_INV} ya existen. 0 cambios.")
         conn.close()
         return
 
@@ -53,7 +56,10 @@ def main() -> None:
 
     if args.dry_run:
         for p in PLANES:
-            print(f"[dry-run] INSERT evidencia {p}: {GH_RUN}")
+            if not ya:
+                print(f"[dry-run] INSERT evidencia {p}: {GH_RUN}")
+            if not ya_inv:
+                print(f"[dry-run] INVALIDA {p}: {GH_RUN_OLD}")
         conn.close()
         return
 
@@ -63,22 +69,39 @@ def main() -> None:
     try:
         ts = ahora()
         insertados = 0
-        for plan_id in PLANES:
-            rc = conn.execute(
-                "INSERT OR IGNORE INTO evidencia (plan_id, fuente, dice) VALUES (?,?,?)",
-                (plan_id, GH_RUN, DICE),
-            ).rowcount
-            if rc == 1:
-                insertados += 1
-                print(f"  [+] {plan_id}: {GH_RUN}")
-            else:
-                print(f"  [skip] {plan_id}: {GH_RUN} ya existe")
+        if not ya:
+            for plan_id in PLANES:
+                rc = conn.execute(
+                    "INSERT OR IGNORE INTO evidencia (plan_id, fuente, dice) VALUES (?,?,?)",
+                    (plan_id, GH_RUN, DICE),
+                ).rowcount
+                if rc == 1:
+                    insertados += 1
+                    print(f"  [+] {plan_id}: {GH_RUN}")
+                else:
+                    print(f"  [skip] {plan_id}: {GH_RUN} ya existe")
+            conn.execute(
+                "INSERT INTO evento (cuando, actor, accion, detalle) VALUES (?,?,?,?)",
+                (ts, ACTOR, EVENTO_GUARDIA,
+                 f"{insertados} evidencias gh:run:34983669221 (T07, T14) — CI main green, deploy waiting"),
+            )
 
-        conn.execute(
-            "INSERT INTO evento (cuando, actor, accion, detalle) VALUES (?,?,?,?)",
-            (ts, ACTOR, EVENTO_GUARDIA,
-             f"{insertados} evidencias gh:run:34983669221 (T07, T14) — CI main green, deploy waiting"),
-        )
+        inv_count = 0
+        if not ya_inv:
+            for plan_id in PLANES:
+                rc_inv = conn.execute(
+                    "UPDATE evidencia SET fuente=? WHERE plan_id=? AND fuente=?",
+                    (f"INVALIDA:{GH_RUN_OLD}", plan_id, GH_RUN_OLD),
+                ).rowcount
+                if rc_inv:
+                    inv_count += rc_inv
+                    print(f"  [inv] {plan_id}: {GH_RUN_OLD} → INVALIDA: (superseded)")
+            conn.execute(
+                "INSERT INTO evento (cuando, actor, accion, detalle) VALUES (?,?,?,?)",
+                (ts, ACTOR, EVENTO_GUARDIA_INV,
+                 f"{inv_count} old run {GH_RUN_OLD} invalidated in T07/T14 — superseded by {GH_RUN}"),
+            )
+
         conn.commit()
     except Exception:
         conn.rollback()
