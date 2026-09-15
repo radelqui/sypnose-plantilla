@@ -22,6 +22,7 @@ SOL_NOMBRE = "rag-banking-agent (Coforge/Santander)"
 PROY_ID = "proy:vmi3211028:rag-banking-agent"
 OFERTA_TITULO = "Python Developer + IA · Coforge / Santander"
 REPO_URL = "https://github.com/radelqui/rag-banking-agent"
+EXCLUIR_CUBRE_SOL = {"linea:coforge:T04", "linea:coforge:T11"}
 
 
 def ahora() -> str:
@@ -157,14 +158,9 @@ def main() -> None:
         if SOL_ID in [a.split()[-1] for a in altas if "nodo" in a]:
             evento(conn, args.actor, "alta_nodo", f"nodo solución {SOL_ID}", nodo_id=SOL_ID)
 
-        insertar_si_nuevo(
-            conn,
-            "INSERT OR IGNORE INTO ancla (coleccion_id, nodo_id) VALUES (?, ?)",
-            (COLECCION, SOL_ID),
-            f"ancla {SOL_ID}", altas, existian,
-        )
-
         for (linea_id,) in lineas:
+            if linea_id in EXCLUIR_CUBRE_SOL:
+                continue
             rc = conn.execute(
                 "INSERT OR IGNORE INTO relacion (origen, destino, tipo, certeza, fuente, visto_en) "
                 "VALUES (?, ?, 'cubre', 'observado', ?, ?)",
@@ -228,12 +224,26 @@ def main() -> None:
         else:
             existian.append(f"afirmacion oferta_titulo en {SOL_ID}")
 
+        plan_linea_map = {}
+        for campo, valor in conn.execute(
+            "SELECT campo, valor FROM afirmacion WHERE nodo_id=? AND campo LIKE 'plan_linea:%' AND vigente=1",
+            (NODO_PLANTILLA,),
+        ).fetchall():
+            lid = campo.replace("plan_linea:", "")
+            sufijo_t = valor.replace("PLAN-T-", "").lstrip("0")
+            plan_linea_map[sufijo_t] = lid
+
         planes_cs = conn.execute(
             "SELECT id FROM plan WHERE id LIKE 'PLAN-CS-T%' ORDER BY id"
         ).fetchall()
+        obj_altas = 0
         for (plan_id,) in planes_cs:
-            sufijo = plan_id.replace("PLAN-CS-T", "")
-            linea_id = f"linea:coforge:T{sufijo}"
+            sufijo = plan_id.replace("PLAN-CS-T", "").lstrip("0")
+            lid = plan_linea_map.get(sufijo)
+            if not lid:
+                avisos.append(f"plan_objetivo: {plan_id} sin plan_linea, se omite")
+                continue
+            linea_id = f"linea:coforge:{lid}"
             if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (linea_id,)).fetchone():
                 avisos.append(f"plan_objetivo: {linea_id} no existe, se omite {plan_id}")
                 continue
@@ -243,12 +253,13 @@ def main() -> None:
             ).rowcount
             if rc == 1:
                 altas.append(f"plan_objetivo {plan_id} → {linea_id}")
+                obj_altas += 1
             else:
                 existian.append(f"plan_objetivo {plan_id} → {linea_id}")
 
-        if planes_cs:
+        if obj_altas > 0:
             evento(conn, args.actor, "plan_objetivo_lineas",
-                   f"{len(planes_cs)} PLAN-CS-T enlazados a linea_oferta como objetivo")
+                   f"{obj_altas} PLAN-CS-T enlazados a linea_oferta como objetivo")
 
         escrito_por = conn.execute(
             "SELECT id, nodo_id, valor FROM afirmacion WHERE campo='escrito_por' AND vigente=1"
