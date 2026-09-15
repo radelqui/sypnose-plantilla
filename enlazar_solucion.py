@@ -155,7 +155,8 @@ def main() -> None:
 
     verificar_canonicos_registrados(conn)
 
-    # Regla lead: cada línea en cubre_por_evidencia debe tener ≥1 evidencia en su plan
+    # Regla lead + 07: cada línea en cubre_por_evidencia debe tener ≥1 evidencia
+    # real (no bloqueo:*) en su plan
     linea_a_plan = {v: k for k, v in plan_por_linea.items()}
     sin_evidencia = []
     for lid in sorted(cubre_set):
@@ -164,10 +165,11 @@ def main() -> None:
             sin_evidencia.append(f"{lid}: sin plan en plan_por_linea")
             continue
         n = conn.execute(
-            "SELECT COUNT(*) FROM evidencia WHERE plan_id=?", (plan_id,)
+            "SELECT COUNT(*) FROM evidencia WHERE plan_id=? AND fuente NOT LIKE 'bloqueo:%'",
+            (plan_id,),
         ).fetchone()[0]
         if n == 0:
-            sin_evidencia.append(f"{lid} ({plan_id}): 0 filas en evidencia")
+            sin_evidencia.append(f"{lid} ({plan_id}): 0 filas de evidencia real (excl. bloqueo)")
     if sin_evidencia:
         for s in sin_evidencia:
             print(f"  [FALLO] {s}")
