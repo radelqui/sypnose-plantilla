@@ -1,4 +1,4 @@
-"""git commit-msg (B5): exige al pie Chat:, Model:, Plan: y Tarea:. Rechaza el commit y deja bloqueo:commit-msg en el registro."""
+"""git commit-msg (B5): exige al pie Chat:, Model:, Plan: y Tarea:. Rechaza el commit y anota bloqueo:commit-msg en la cola del caparazón."""
 from __future__ import annotations
 
 import re
@@ -30,25 +30,17 @@ def main() -> None:
         fallos.append(f"Plan: debe ser el plan abierto {plan_vigente} (llegó '{campos['Plan']}')")
     if tarea and campos.get("Tarea") and campos["Tarea"] not in (str(tarea["id"]), f"{plan_vigente}/{tarea['req_ref']}"):
         fallos.append(f"Tarea: debe ser {tarea['id']} o {plan_vigente}/{tarea['req_ref']} (llegó '{campos['Tarea']}')")
-    actor = estado.get("actor") or comun.actor_de(cfg, None)
-    plan = comun.plan_de(estado, cfg)
-    try:
-        comun.salud(cfg)
-    except comun.RegistroCaido as e:
-        comun.guardar_pendientes(comun.ops_bloqueo(actor, "registro", plan, f"commit rechazado: registro caído ({e})"))
-        sys.stderr.write(f"COMMIT RECHAZADO: REGISTRO SYPNOSE CAÍDO (FAIL LOUD). {e}\n")
-        sys.exit(1)
     if not fallos:
         sys.exit(0)
     asunto = lineas[0][:120] if lineas else ""
-    try:
-        r = comun.emitir(cfg, comun.ops_bloqueo(actor, "commit-msg", plan, f"commit rechazado en {cfg['worktree']} ('{asunto}'): " + "; ".join(fallos)))
-        nota = f"Registrado en SYPNOSE: evento {r['resultados'][0]['id']} bloqueo:commit-msg + evidencia."
-    except (comun.RegistroCaido, comun.RegistroRechazo) as e:
-        nota = f"(No registrado: {e}.)"
+    actor = estado.get("actor") or comun.actor_de(cfg, None)
+    comun.encolar(estado.get("session_id") or "sin-sesion",
+                  comun.ops_bloqueo(actor, "commit-msg", comun.plan_de(estado, cfg),
+                                    f"commit rechazado en {cfg['worktree']} ('{asunto}'): " + "; ".join(fallos)))
     sys.stderr.write("COMMIT RECHAZADO por el caparazón:\n - " + "\n - ".join(fallos)
                      + f"\nPie obligatorio:\n  Chat: {cfg['carpeta']}\n  Model: <modelo real>\n  Plan: {plan_vigente or '<plan abierto>'}\n"
-                     + f"  Tarea: {tarea['id'] if tarea else '<id de tarea>'}\n{nota}\n")
+                     + f"  Tarea: {tarea['id'] if tarea else '<id de tarea>'}\n"
+                     + "bloqueo:commit-msg anotado en la cola del caparazón; llega al registro SYPNOSE en el siguiente envío.\n")
     sys.exit(1)
 
 
