@@ -162,13 +162,13 @@ cubre_por_evidencia:
   T03: observado
   T05: observado
   T06: observado
-  T07: inferido      # CI main en failure (gh:run conclusion!=success)
+  T07: observado     # gh:run:34983669221 success (lead autoriza subida)
   T08: inferido      # evidencia dice PARCIAL (psql manual no en CI)
   T09: observado
   T10: observado
   T12: observado
   T13: observado
-  T14: inferido      # gh:run:34870628891 conclusion=failure; sube a observado cuando main verde
+  T14: observado     # gh:run:34983669221 success (lead autoriza subida)
   T15: observado
 # Líneas de proceso: no tienen archivos de código; su certeza viene de evidencias evento:/git:commit:.
 lineas_de_proceso: [T06, T09]
