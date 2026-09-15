@@ -1,4 +1,4 @@
-"""TRASPASO-4 A2 (D3 v3): operaciones sobre raíces linea_oferta.
+"""TRASPASO-4 A2 (D3 v4): operaciones sobre raíces linea_oferta.
 
     python3 raiz.py add     --db DB
     python3 raiz.py edit    --db DB --id T01 [--alcance]
@@ -6,11 +6,14 @@
     python3 raiz.py listar  --db DB
     python3 raiz.py sync    --db DB [--registrar-hash]
 
-D3 v3: la oferta canónica es UNA ruta fija (plantilla/oferta-coforge.txt junto a este script).
-No existe --oferta ni ninguna otra ruta. El fichero debe estar commiteado (git status limpio)
-y su hash registrado como afirmación 'hash_oferta' en el nodo plantilla.
-edit/add/sync comparan el hash del fichero con el registrado ANTES de escribir.
-Si difieren, si hay cambios sin commit, o si el fichero no existe → abortan.
+D3 v4: plantilla/ es su propio repo git. La oferta canónica es UNA ruta fija
+(oferta-coforge.txt junto a este script). No existe --oferta.
+El fichero debe estar commiteado (git -C plantilla status limpio).
+Dos afirmaciones canónicas en el nodo plantilla:
+  - oferta_hash: SHA-256 truncado a 16 hex del contenido
+  - oferta_commit: git rev-parse HEAD del repo plantilla
+edit/add/sync comparan AMBOS antes de escribir. Si difieren → exit ≠0.
+sync --registrar-hash actualiza ambas (solo si git status limpio).
 """
 from __future__ import annotations
 
@@ -68,33 +71,59 @@ def hash_oferta(texto: str) -> str:
     return hashlib.sha256(texto.encode()).hexdigest()[:16]
 
 
+PLANTILLA_DIR = OFERTA_PATH.parent
+
+
 def verificar_git_limpio() -> None:
-    """Aborta si oferta-coforge.txt tiene cambios sin commit o no está tracked."""
+    """Aborta si oferta-coforge.txt tiene cambios sin commit en el repo plantilla."""
     try:
         r = subprocess.run(
-            ["git", "status", "--porcelain", "--", str(OFERTA_PATH)],
-            capture_output=True, text=True, cwd=OFERTA_PATH.parent, timeout=10,
+            ["git", "-C", str(PLANTILLA_DIR), "status", "--porcelain", "oferta-coforge.txt"],
+            capture_output=True, text=True, timeout=10,
         )
     except FileNotFoundError:
-        sys.exit("[FALLO] git no encontrado; el fichero oferta debe estar en un repo git con status limpio")
+        sys.exit("[FALLO] git no encontrado; plantilla/ debe ser su propio repo git")
     except subprocess.TimeoutExpired:
         sys.exit("[FALLO] git status timeout")
     if r.returncode != 0:
-        sys.exit(f"[FALLO] git status falló (rc={r.returncode}): {r.stderr.strip()}")
+        sys.exit(f"[FALLO] git -C plantilla status falló (rc={r.returncode}): {r.stderr.strip()}\n"
+                 f"¿plantilla/ tiene 'git init'?")
     if r.stdout.strip():
         sys.exit(f"[FALLO] oferta-coforge.txt tiene cambios sin commit: {r.stdout.strip()}\n"
-                 f"Haz 'git add + git commit' antes de ejecutar raiz.py.")
+                 f"Haz 'git add + git commit' en el repo plantilla antes de ejecutar raiz.py.")
+
+
+def obtener_commit_head() -> str:
+    """Devuelve el SHA del HEAD del repo plantilla."""
+    r = subprocess.run(
+        ["git", "-C", str(PLANTILLA_DIR), "rev-parse", "HEAD"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if r.returncode != 0:
+        sys.exit(f"[FALLO] git rev-parse HEAD falló: {r.stderr.strip()}")
+    return r.stdout.strip()
 
 
 def verificar_hash_canonico(conn: sqlite3.Connection, h: str) -> None:
-    registrado = conn.execute(
-        "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo='hash_oferta' AND vigente=1",
+    reg_hash = conn.execute(
+        "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo='oferta_hash' AND vigente=1",
         (NODO_PLANTILLA,),
     ).fetchone()
-    if not registrado:
-        sys.exit(f"[FALLO] no hay hash canónico registrado. Ejecuta 'sync --registrar-hash' primero.")
-    if registrado[0] != h:
-        sys.exit(f"[FALLO] hash del fichero ({h}) no coincide con el canónico ({registrado[0]}). "
+    if not reg_hash:
+        sys.exit("[FALLO] no hay oferta_hash registrado. Ejecuta 'sync --registrar-hash' primero.")
+    if reg_hash[0] != h:
+        sys.exit(f"[FALLO] hash del fichero ({h}) no coincide con el canónico ({reg_hash[0]}). "
+                 f"Si el cambio es intencional, haz commit y ejecuta 'sync --registrar-hash'.")
+
+    commit_actual = obtener_commit_head()
+    reg_commit = conn.execute(
+        "SELECT valor FROM afirmacion WHERE nodo_id=? AND campo='oferta_commit' AND vigente=1",
+        (NODO_PLANTILLA,),
+    ).fetchone()
+    if not reg_commit:
+        sys.exit("[FALLO] no hay oferta_commit registrado. Ejecuta 'sync --registrar-hash' primero.")
+    if reg_commit[0] != commit_actual:
+        sys.exit(f"[FALLO] commit HEAD ({commit_actual[:12]}) no coincide con el registrado ({reg_commit[0][:12]}). "
                  f"Si el cambio es intencional, haz commit y ejecuta 'sync --registrar-hash'.")
 
 
@@ -330,24 +359,34 @@ def cmd_sync(args):
 
     conn, db_path = conectar(args.db, args.actor)
 
+    commit_head = obtener_commit_head()
+
     if args.registrar_hash:
-        registrado = conn.execute(
-            "SELECT id, valor FROM afirmacion WHERE nodo_id=? AND campo='hash_oferta' AND vigente=1",
+        for campo, valor_nuevo in [("oferta_hash", h), ("oferta_commit", commit_head)]:
+            registrado = conn.execute(
+                "SELECT id, valor FROM afirmacion WHERE nodo_id=? AND campo=? AND vigente=1",
+                (NODO_PLANTILLA, campo),
+            ).fetchone()
+            if registrado and registrado[1] == valor_nuevo:
+                print(f"[{campo}] ya registrado: {valor_nuevo[:16]}")
+            else:
+                if registrado:
+                    conn.execute("UPDATE afirmacion SET vigente=0 WHERE id=?", (registrado[0],))
+                conn.execute(
+                    "INSERT INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando) VALUES (?,?,?,?,?,?,?)",
+                    (NODO_PLANTILLA, campo, valor_nuevo, "observado", FUENTE, ACTOR, ahora()),
+                )
+                print(f"[{campo}] registrado: {valor_nuevo[:16]}")
+        # Invalidar el antiguo campo hash_oferta si existe (renombrado a oferta_hash)
+        old = conn.execute(
+            "SELECT id FROM afirmacion WHERE nodo_id=? AND campo='hash_oferta' AND vigente=1",
             (NODO_PLANTILLA,),
         ).fetchone()
-        if registrado and registrado[1] == h:
-            print(f"[hash] ya registrado: {h}")
-        else:
-            if registrado:
-                conn.execute("UPDATE afirmacion SET vigente=0 WHERE id=?", (registrado[0],))
-            conn.execute(
-                "INSERT INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando) VALUES (?,?,?,?,?,?,?)",
-                (NODO_PLANTILLA, "hash_oferta", h, "observado", FUENTE, ACTOR, ahora()),
-            )
-            evento(conn, ACTOR, "hash_oferta_registrado",
-                   f"hash canónico actualizado: {registrado[1] if registrado else 'ninguno'} → {h}",
-                   nodo_id=NODO_PLANTILLA)
-            print(f"[hash] registrado: {h}")
+        if old:
+            conn.execute("UPDATE afirmacion SET vigente=0 WHERE id=?", (old[0],))
+        evento(conn, ACTOR, "oferta_canonizada",
+               f"oferta_hash={h}, oferta_commit={commit_head[:12]}",
+               nodo_id=NODO_PLANTILLA)
     else:
         verificar_hash_canonico(conn, h)
 
