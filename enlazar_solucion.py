@@ -192,8 +192,14 @@ def _gh_run_success(run_id: str) -> bool:
         return False
 
 
+PREFIJOS_ACEPTADOS = ("plan:", "comprobacion:", "07-verificador/")
+
+
 def validar_fuente(fuente: str) -> tuple[bool, str]:
     """Returns (valid, reason)."""
+    if any(fuente.startswith(p) for p in PREFIJOS_ACEPTADOS):
+        return True, "ok (prefix accepted)"
+
     m = RE_SECTION.match(fuente)
     if m:
         path, section, sha = m.groups()
@@ -217,9 +223,6 @@ def validar_fuente(fuente: str) -> tuple[bool, str]:
             return True, "ok"
         return False, f"gh run {run_id} not success"
 
-    if fuente.startswith("plan:"):
-        return True, "ok (plan reference)"
-
     return True, "ok (unrecognized format, accepted)"
 
 
@@ -230,13 +233,23 @@ def calcular_certeza(conn, plan_id: str) -> tuple[str, list[str]]:
         "AND fuente NOT LIKE 'bloqueo:%' AND fuente NOT LIKE 'INVALIDA:%'",
         (plan_id,),
     ).fetchall()
+
+    invalidas = {
+        row[0].replace("INVALIDA:", "", 1)
+        for row in conn.execute(
+            "SELECT fuente FROM evidencia WHERE plan_id=? AND fuente LIKE 'INVALIDA:%'",
+            (plan_id,),
+        ).fetchall()
+    }
+    filas = [(f, d) for f, d in filas if f not in invalidas]
+
     if not filas:
         return "propuesto", ["0 filas de evidencia real"]
 
     razones = []
     alguna_falla = False
     for fuente, dice in filas:
-        if "PARCIAL" in dice.upper():
+        if re.search(r"\bPARCIAL\b", dice, re.IGNORECASE):
             alguna_falla = True
             razones.append(f"dice contiene PARCIAL: {fuente}")
         valida, motivo = validar_fuente(fuente)
