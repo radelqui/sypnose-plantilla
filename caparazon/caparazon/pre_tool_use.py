@@ -30,7 +30,13 @@ def main() -> None:
     extra = [entrada["scratchpad_dir"]] if entrada.get("scratchpad_dir") else []
     extras_wt = cfg.get("worktrees_extra") or []
     fallos = []
-    for objetivo in cerco.objetivos_herramienta(herramienta, datos, cwd):
+    try:
+        objetivos = cerco.objetivos_herramienta(herramienta, datos, cwd)
+    except cerco.ComandoIlegible as e:
+        # B11 (lead, 15-sep): el cerco nunca adivina rutas; si no puede leer el comando, bloquea y dice qué hacer.
+        objetivos, fallos = [], [f"el cerco no puede leer este comando ({e}): revisa las comillas o pasa el mensaje por fichero: "
+                                 "git commit -F <fichero>"]
+    for objetivo in objetivos:
         motivo = objetivo and cerco.veredicto(objetivo, cwd, estado["worktree"], estado["permitidos"], extra, extras_wt)
         if motivo:
             fallos.append(motivo)
