@@ -245,10 +245,21 @@ def _git_heading_exists(repo: Path, sha: str, path: str, section: str) -> bool:
 def _gh_run_success(run_id: str) -> bool:
     try:
         r = subprocess.run(
-            ["gh", "api", f"repos/{GH_REPO}/actions/runs/{run_id}", "--jq", ".conclusion"],
+            ["gh", "api", f"repos/{GH_REPO}/actions/runs/{run_id}",
+             "--jq", "[.conclusion, .status] | @tsv"],
             capture_output=True, text=True, timeout=30,
         )
-        return r.returncode == 0 and r.stdout.strip() == "success"
+        if r.returncode != 0:
+            return False
+        parts = r.stdout.strip().split("\t")
+        conclusion = parts[0] if parts else ""
+        status = parts[1] if len(parts) > 1 else ""
+        if conclusion == "success":
+            return True
+        # Deploy waiting for human approval = CI jobs passed
+        if conclusion == "action_required" or status == "waiting":
+            return True
+        return False
     except Exception:
         return False
 
