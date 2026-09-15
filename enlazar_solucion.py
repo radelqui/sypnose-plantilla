@@ -61,6 +61,30 @@ def evento(conn, actor, accion, detalle, nodo_id=None, plan_id=None):
 
 
 REPO_RAG = Path(__file__).resolve().parent.parent / "rag-banking-agent"
+REPO_SLUG = "vmi3211028:rag-banking-agent"
+
+
+def nodo_id_para_ruta(ruta: str) -> str:
+    """Converts a repo-relative path to a node ID. ** suffix → dir:, else mod:."""
+    if ruta.endswith("/**"):
+        return f"dir:{REPO_SLUG}:{ruta[:-3]}"
+    return f"mod:{REPO_SLUG}:{ruta}"
+
+
+def ruta_existe_en_repo(ruta: str) -> bool:
+    """Checks whether a file or directory exists at HEAD in the rag-banking-agent repo."""
+    if ruta.endswith("/**"):
+        dir_path = ruta[:-3]
+        r = subprocess.run(
+            ["git", "-C", str(REPO_RAG), "ls-tree", "--name-only", "HEAD", dir_path + "/"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return r.returncode == 0 and bool(r.stdout.strip())
+    r = subprocess.run(
+        ["git", "-C", str(REPO_RAG), "cat-file", "-e", f"HEAD:{ruta}"],
+        capture_output=True, text=True, timeout=10,
+    )
+    return r.returncode == 0
 
 NODO_A_RUTA = {
     "dir:": lambda nid: nid.split(":", 3)[-1] if nid.count(":") >= 3 else None,
@@ -145,7 +169,8 @@ def cargar_oferta_yaml():
     for lid, certeza in cubre_map.items():
         if certeza not in CERTEZAS_VALIDAS:
             sys.exit(f"[FALLO] certeza inválida '{certeza}' para línea {lid}")
-    return plan_por_linea, cubre_map
+    archivos = doc.get("archivos_por_linea", {})
+    return plan_por_linea, cubre_map, archivos
 
 
 # ── Certeza calculation from sources ──
@@ -331,7 +356,7 @@ def main() -> None:
         sys.exit(f"[FALLO] repo rag-banking-agent no encontrado en {REPO_RAG}; "
                  "necesario para validar fuentes file@sha")
 
-    plan_por_linea, cubre_map = cargar_oferta_yaml()
+    plan_por_linea, cubre_map, archivos_por_linea = cargar_oferta_yaml()
     cubre_set = set(cubre_map.keys())
     print(f"[oferta.yaml] plan_por_linea: {len(plan_por_linea)} entradas, cubre_por_evidencia: {len(cubre_set)} líneas")
 
@@ -455,17 +480,49 @@ def main() -> None:
                            nodo_id=SOL_ID)
                     altas.append(f"certeza cubre→{destino}: {certeza_bd} → {certeza_yaml}")
 
-        modulos_t01 = [
-            "dir:vmi3211028:rag-banking-agent:app",
-            "mod:vmi3211028:rag-banking-agent:app/api/routes.py",
+        # cubre módulo/carpeta → línea (archivos_por_linea de oferta.yaml)
+        cubre_arch_count = 0
+        for lid, rutas in archivos_por_linea.items():
+            linea_id = f"linea:coforge:{lid}"
+            if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (linea_id,)).fetchone():
+                continue
+            for ruta in rutas:
+                nid = nodo_id_para_ruta(ruta)
+                existe = ruta_existe_en_repo(ruta)
+                certeza = "observado" if existe else "propuesto"
+                if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (nid,)).fetchone():
+                    tipo = "carpeta" if ruta.endswith("/**") else "modulo"
+                    nombre = ruta.rstrip("/*")
+                    conn.execute(
+                        "INSERT INTO nodo (id, tipo, nombre, ambito, vitalidad, descubierto_en, descubierto_por) "
+                        "VALUES (?, ?, ?, 'coforge-santander', 'activo', ?, ?)",
+                        (nid, tipo, nombre, ahora(), FUENTE),
+                    )
+                    evento(conn, args.actor, "alta_nodo", f"nodo {tipo} {nid}", nodo_id=nid)
+                    altas.append(f"nodo {nid}")
+                rc = conn.execute(
+                    "INSERT OR IGNORE INTO relacion (origen, destino, tipo, certeza, fuente, visto_en) "
+                    "VALUES (?, ?, 'cubre', ?, ?, ?)",
+                    (nid, linea_id, certeza, FUENTE, ahora()),
+                ).rowcount
+                if rc == 1:
+                    evento(conn, args.actor, "relacion_cubre", f"{nid} cubre {linea_id} [{certeza}]", nodo_id=nid)
+                    altas.append(f"cubre {nid} → {linea_id} [{certeza}]")
+                    cubre_arch_count += 1
+                else:
+                    existian.append(f"cubre {nid} → {linea_id}")
+        if cubre_arch_count:
+            print(f"  [archivos_por_linea] {cubre_arch_count} relaciones cubre módulo→línea creadas")
+
+        # T01 API nodes (pre-existing from graphify, not file-based)
+        api_nodos_t01 = [
             "api:vmi3211028:rag-banking-agent:POST:/consultar",
             "api:vmi3211028:rag-banking-agent:GET:/health/live",
             "api:vmi3211028:rag-banking-agent:GET:/health/ready",
         ]
         linea_t01 = "linea:coforge:T01"
-        for mod in modulos_t01:
+        for mod in api_nodos_t01:
             if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (mod,)).fetchone():
-                print(f"  ! módulo {mod} no existe, se omite")
                 continue
             rc = conn.execute(
                 "INSERT OR IGNORE INTO relacion (origen, destino, tipo, certeza, fuente, visto_en) "
@@ -590,7 +647,7 @@ def main() -> None:
     print("\n[comprobación]")
     print("  nodo solución existe  :", "SÍ" if conn.execute("SELECT 1 FROM nodo WHERE id=?", (SOL_ID,)).fetchone() else "NO")
     print("  relaciones cubre sol  :", q(f"SELECT COUNT(*) FROM relacion WHERE origen='{SOL_ID}' AND tipo='cubre'"))
-    print("  relaciones cubre mod→T01:", q(f"SELECT COUNT(*) FROM relacion WHERE destino='linea:coforge:T01' AND tipo='cubre' AND origen!='{SOL_ID}'"))
+    print("  relaciones cubre mod→línea:", q(f"SELECT COUNT(*) FROM relacion WHERE tipo='cubre' AND origen!='{SOL_ID}' AND destino LIKE 'linea:coforge:%'"))
     print("  afirmaciones tecnico  :", q(f"SELECT COUNT(*) FROM afirmacion WHERE nodo_id='{SOL_ID}' AND campo LIKE 'tecnico:%' AND vigente=1"))
     print("  plan_objetivo lineas  :", q("SELECT COUNT(*) FROM plan_objetivo WHERE plan_id LIKE 'PLAN-CS-T%' AND nodo_id LIKE 'linea:%'"))
     print("  afirmaciones commit   :", q("SELECT COUNT(*) FROM afirmacion WHERE campo='commit' AND vigente=1"))

@@ -170,6 +170,21 @@ cubre_por_evidencia:
   T13: observado
   T14: inferido      # gh:run:34870628891 conclusion=failure; sube a observado cuando main verde
   T15: observado
+# Archivos/carpetas del repo que cubren cada línea (para cubre módulo→línea en la vista).
+# Rutas relativas al repo rag-banking-agent. ** = directorio completo.
+# T06 y T09 no tienen archivos (verificación por actor y trazabilidad por commits).
+archivos_por_linea:
+  T01: [app/**, app/api/routes.py, app/main.py]
+  T02: [app/agent/**]
+  T03: [app/api/routes.py, app/api/schemas.py]
+  T05: [k8s/deployment.yaml]
+  T07: [.github/workflows/ci.yml, ci/**]
+  T08: [app/rag/**, scripts/init_db.sql]
+  T10: [app/rag/engine.py, app/agent/tools.py]
+  T12: [app/security/**]
+  T13: [Dockerfile, k8s/**]
+  T14: [.github/workflows/**, ci/**]
+  T15: [README.md, k8s/**, Dockerfile]
 roles_por_linea:
   T01: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T02: {rol: 04-agentes, modelo: claude-sonnet-5}
