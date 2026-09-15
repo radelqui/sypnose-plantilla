@@ -6,6 +6,7 @@ import hashlib
 import json
 import operator
 import os
+import posixpath
 import re
 import shlex
 import sys
@@ -82,13 +83,55 @@ def _tokens(texto: str) -> list[str] | None:
         return None
 
 
-def _es_sqlite(toks: list[str] | None, consulta: str) -> bool:
-    return (bool(toks) and len(toks) >= 3 and os.path.basename(toks[0]).lower() in ("sqlite3", "sqlite3.exe")
-            and not any(PUNTUACION.fullmatch(t) for t in toks) and all(t.startswith("-") for t in toks[1:-2])
-            and suelto(toks[-1]) == suelto(consulta))
+SQLITE_OPCIONES = {"-readonly", "-header", "-noheader", "-csv", "-list", "-line", "-batch", "-bail", "-json", "-box", "-column",
+                   "-table", "-markdown", "-quote", "-safe"}
+SSH_OPCION_O = re.compile(r"(?i)(BatchMode=yes|ConnectTimeout=\d+|ServerAliveInterval=\d+|ServerAliveCountMax=\d+)")
 
 
-def forma_pura(comando: str, comprobacion: str, cwd: str | None, worktree: str) -> str | None:
+def _consulta_sqlite(toks: list[str] | None, consulta: str, bd_del_registro) -> str | None:
+    """None si toks es `sqlite3 [opciones de formato] <bd del registro> "<consulta>"`; si no, por qué no cuenta."""
+    if not toks or len(toks) < 3 or os.path.basename(toks[0]).lower() not in ("sqlite3", "sqlite3.exe"):
+        return "no es `sqlite3 <bd del registro> \"<consulta>\"`"
+    if any(PUNTUACION.fullmatch(t) for t in toks) or any(t not in SQLITE_OPCIONES for t in toks[1:-2]):
+        return "sqlite3 lleva opciones o comandos que no están permitidos"
+    if suelto(toks[-1]) != suelto(consulta):
+        return "no es la consulta tal cual"
+    if not bd_del_registro(toks[-2]):
+        return f"la base de datos {toks[-2]} no es la del registro configurado"
+    return None
+
+
+def _ssh_al_registro(toks: list[str], cfg: dict) -> str | None:
+    """None si toks es `ssh [-i clave] [-p puerto del registro] [-o BatchMode/ConnectTimeout/ServerAlive…] [-q] [-T] <destino> "<remoto>"`.
+    Otras opciones (-o HostName, -J, -F…) podrían llevar la conexión a otro servidor sin cambiar el destino escrito."""
+    s = cfg.get("ssh") or {}
+    i, fin = 1, len(toks) - 2
+    while i < fin:
+        opcion, valor = toks[i], toks[i + 1] if i + 1 < fin else None
+        if opcion in ("-q", "-T"):
+            i += 1
+        elif opcion == "-i" and valor is not None:
+            i += 2
+        elif opcion == "-p" and valor == str(s.get("puerto")):
+            i += 2
+        elif opcion == "-o" and valor is not None and SSH_OPCION_O.fullmatch(valor):
+            i += 2
+        else:
+            return f"ssh lleva la opción {opcion} {valor or ''}, que no está permitida".replace("  ", " ")
+    if len(toks) < 3 or toks[-2] != s.get("destino"):
+        return f"ssh no va al servidor del registro ({s.get('destino')})"
+    return None
+
+
+def _bd_remota_del_registro(bd: str, cfg: dict) -> bool:
+    s = cfg.get("ssh") or {}
+    destino, esperada = str(s.get("destino") or ""), str(s.get("db") or "")
+    if bd.startswith("~/") and "@" in destino:
+        bd = f"/home/{destino.split('@')[0]}/{bd[2:]}"
+    return bool(esperada) and posixpath.normpath(bd) == posixpath.normpath(esperada)
+
+
+def forma_pura(comando: str, comprobacion: str, cwd: str | None, worktree: str, cfg: dict) -> str | None:
     """None si el comando es exactamente la comprobación (solo se admite `cd <worktree> &&` delante; una consulta SQL va como
     `sqlite3 <bd> "<consulta>"`, directa o por ssh); si no, por qué no cuenta. Un filtro, un `; echo`, una sustitución o un echo del texto
     de la comprobación falsearían la salida que se valida."""
@@ -105,11 +148,14 @@ def forma_pura(comando: str, comprobacion: str, cwd: str | None, worktree: str) 
     if any("$(" in t or "`" in t or "${" in t for t in toks):
         return "lleva sustituciones ($(…), `…` o ${…})"
     if re.match(r"(?is)^\s*(select|with)\b", orden):
-        if _es_sqlite(toks, orden):
-            return None
-        if len(toks) >= 3 and os.path.basename(toks[0]).lower() in ("ssh", "ssh.exe") and _es_sqlite(_tokens(toks[-1]), orden):
-            return None
-        return "no es la consulta tal cual (sqlite3 <bd> \"<consulta>\", directa o por ssh)"
+        if toks and os.path.basename(toks[0]).lower() in ("ssh", "ssh.exe"):
+            return _ssh_al_registro(toks, cfg) or _consulta_sqlite(_tokens(toks[-1]), orden, lambda bd: _bd_remota_del_registro(bd, cfg))
+        escritura = str(cfg.get("escritura") or "")
+        if escritura.startswith("sqlite:"):
+            local = cerco.norm(escritura[len("sqlite:"):], base)
+            return _consulta_sqlite(toks, orden, lambda bd: cerco.norm(bd, base) == local)
+        s = cfg.get("ssh") or {}
+        return f"la consulta va contra el registro por ssh: ssh {s.get('destino')} \"sqlite3 {s.get('db')} \\\"<consulta>\\\"\""
     esperados = _tokens(orden) or []
     if [suelto(t) for t in toks] != [suelto(t) for t in esperados]:
         return "no es exactamente la comprobación"
@@ -118,16 +164,16 @@ def forma_pura(comando: str, comprobacion: str, cwd: str | None, worktree: str) 
     return None
 
 
-def validar(bloque: str, estado: dict):
+def validar(bloque: str, estado: dict, cfg: dict):
     fallos = []
     comprobacion = estado["requisito"]["comprobacion"]
     orden = suelto(ejecutable(comprobacion))
     if orden not in suelto(bloque):
         fallos.append(f"el bloque ENTREGA no cita la comprobación literal `{comprobacion}`")
     intentos = [c for c in estado.get("comandos", []) if orden in suelto(c["comando"])]
-    ejecuciones = [c for c in intentos if forma_pura(c["comando"], comprobacion, c.get("cwd"), estado["worktree"]) is None]
+    ejecuciones = [c for c in intentos if forma_pura(c["comando"], comprobacion, c.get("cwd"), estado["worktree"], cfg) is None]
     if intentos and (not ejecuciones or intentos[-1] is not ejecuciones[-1]):
-        motivo = forma_pura(intentos[-1]["comando"], comprobacion, intentos[-1].get("cwd"), estado["worktree"])
+        motivo = forma_pura(intentos[-1]["comando"], comprobacion, intentos[-1].get("cwd"), estado["worktree"], cfg)
         fallos.append(f"la última ejecución de la comprobación («{intentos[-1]['comando'][:160]}») no cuenta: {motivo}. Tiene que ir tal cual "
                       "(solo se admite delante 'cd <worktree> &&'), sin tuberías, ';', '&&'/'||' añadidos, echo, redirecciones ni sustituciones")
     linea_salida = None
@@ -194,7 +240,7 @@ def rechazar(cfg: dict, estado: dict, motivo: str, primero: bool) -> None:
 
 
 def entregar(cfg: dict, estado: dict, bloque: str, primero: bool) -> None:
-    fallos, leccion, linea_salida = validar(bloque, estado)
+    fallos, leccion, linea_salida = validar(bloque, estado, cfg)
     if fallos:
         rechazar(cfg, estado, "ENTREGA rechazada: " + "; ".join(fallos), primero)
     sid, plan_id, actor, tarea = estado["session_id"], estado["plan"]["id"], estado["actor"], estado["tarea"]
