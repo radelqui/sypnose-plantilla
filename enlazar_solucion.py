@@ -274,6 +274,19 @@ def main() -> None:
             evento(conn, args.actor, "plan_objetivo_lineas",
                    f"{obj_altas} PLAN-CS-T enlazados a linea_oferta como objetivo")
 
+        # plan_linea auxiliar en solución (reverse de plan_por_linea: línea → plan)
+        pl_altas = 0
+        for plan_id, linea_sufijo in plan_por_linea.items():
+            campo = f"plan_linea:{linea_sufijo}"
+            if afirmar(conn, args.actor, SOL_ID, campo, plan_id):
+                altas.append(f"plan_linea:{linea_sufijo} = {plan_id}")
+                pl_altas += 1
+            else:
+                existian.append(f"plan_linea:{linea_sufijo}")
+        if pl_altas > 0:
+            evento(conn, args.actor, "plan_linea_sincronizada",
+                   f"{pl_altas} plan_linea en solución desde plan_por_linea", nodo_id=SOL_ID)
+
         # commit por fichero
         escrito_por = conn.execute(
             "SELECT id, nodo_id, valor FROM afirmacion WHERE campo='escrito_por' AND vigente=1"
