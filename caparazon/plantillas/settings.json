@@ -1,0 +1,52 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "{{PYTHON}}", "args": ["{{CAPARAZON}}/brief.py"], "timeout": 120, "statusMessage": "caparazón: brief desde el registro SYPNOSE"}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "{{PYTHON}}", "args": ["{{CAPARAZON}}/prompt_submit.py"], "timeout": 30}]}
+    ],
+    "PreToolUse": [
+      {"matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell", "hooks": [{"type": "command", "command": "{{PYTHON}}", "args": ["{{CAPARAZON}}/pre_tool_use.py"], "timeout": 60}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "*", "hooks": [
+        {"type": "command", "command": "{{PYTHON}}", "args": ["{{CAPARAZON}}/post_tool_use.py"], "timeout": 60},
+        {"type": "command", "command": "{{PYTHON}}", "args": ["{{CAPARAZON}}/flush.py", "--si-toca", "60"], "async": true}
+      ]}
+    ],
+    "PostToolUseFailure": [
+      {"matcher": "Bash|PowerShell", "hooks": [{"type": "command", "command": "{{PYTHON}}", "args": ["{{CAPARAZON}}/post_tool_use.py"], "timeout": 60}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "{{PYTHON}}", "args": ["{{CAPARAZON}}/stop.py"], "timeout": 90}]}
+    ],
+    "PostModelSwitch": [
+      {"hooks": [{"type": "command", "command": "{{PYTHON}}", "args": ["{{CAPARAZON}}/model_switch.py"], "timeout": 30}]}
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(python -m pytest *)",
+      "Bash(pytest *)",
+      "Bash(ruff check *)"
+    ],
+    "deny": [
+      "Edit(/.claude/**)",
+      "Write(/.claude/**)",
+      "Edit(/.mcp.json)",
+      "Write(/.mcp.json)",
+      "Read(//**/.env)",
+      "Bash(git push *)",
+      "Bash(git config *)",
+      "Bash(git reset --hard *)"
+    ]
+  },
+  "enabledMcpjsonServers": ["sypnose", "knowledge-hub", "github"],
+  "env": {"SYPNOSE_MODO": "{{MODO}}"}
+}

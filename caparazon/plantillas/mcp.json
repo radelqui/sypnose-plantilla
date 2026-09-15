@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "sypnose": {
+      "type": "stdio",
+      "command": "{{SSH}}",
+      "args": ["-o", "BatchMode=yes", "-o", "ServerAliveInterval=30", "-i", "{{SSH_CLAVE}}", "-p", "{{SSH_PUERTO}}", "{{SSH_DESTINO}}",
+               "/home/sypnose/n22/bin/node", "--no-warnings", "/home/sypnose/sypnose-f1/src/mcp/servidor-mcp.mjs"]
+    },
+    "knowledge-hub": {
+      "type": "sse",
+      "url": "${SYPNOSE_KB_SSE_URL:-http://127.0.0.1:18793/sse}"
+    },
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headersHelper": "\"{{PYTHON_POSIX}}\" \"{{CAPARAZON_POSIX}}/cabeceras_github.py\""
+    }
+  }
+}
