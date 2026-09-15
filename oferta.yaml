@@ -151,8 +151,25 @@ plan_por_linea:
   PLAN-CS-T13: T11   # React/frontend (sin yaml task, deseable)
   PLAN-CS-T14: T14   # CI/CD tools (sin yaml task, deseable)
   PLAN-CS-T15: T15   # microservices arch (sin yaml task, deseable)
-# Líneas cubiertas por la solución con evidencia. enlazar_solucion.py solo crea cubre para estas.
-cubre_por_evidencia: [T01, T02, T03, T05, T06, T07, T08, T09, T10, T12, T13, T14, T15]
+# Líneas cubiertas por la solución con certeza por línea.
+# observado = comprobación ejecutada con éxito y fuentes existentes
+# inferido  = evidencia real pero parcial o con fuentes en fallo
+# propuesto = sin evidencia
+# enlazar_solucion.py usa este mapa para escribir cubre con la certeza correcta.
+cubre_por_evidencia:
+  T01: observado
+  T02: observado
+  T03: observado
+  T05: observado
+  T06: observado
+  T07: inferido      # CI main en failure (gh:run conclusion!=success)
+  T08: inferido      # evidencia dice PARCIAL (psql manual no en CI)
+  T09: observado
+  T10: observado
+  T12: observado
+  T13: observado
+  T14: inferido      # gh:run:34870628891 conclusion=failure; sube a observado cuando main verde
+  T15: observado
 roles_por_linea:
   T01: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T02: {rol: 04-agentes, modelo: claude-sonnet-5}

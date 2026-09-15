@@ -120,6 +120,9 @@ def afirmar(conn, actor, nodo_id, campo, valor, certeza="observado"):
     return True
 
 
+CERTEZAS_VALIDAS = {"observado", "inferido", "propuesto"}
+
+
 def cargar_oferta_yaml():
     if not OFERTA_YAML.exists():
         sys.exit(f"[FALLO] no existe {OFERTA_YAML}")
@@ -128,10 +131,19 @@ def cargar_oferta_yaml():
     plan_por_linea = doc.get("plan_por_linea")
     if not plan_por_linea:
         sys.exit("[FALLO] oferta.yaml no contiene plan_por_linea")
-    cubre_por_evidencia = doc.get("cubre_por_evidencia")
-    if not cubre_por_evidencia:
+    cubre_raw = doc.get("cubre_por_evidencia")
+    if not cubre_raw:
         sys.exit("[FALLO] oferta.yaml no contiene cubre_por_evidencia")
-    return plan_por_linea, set(cubre_por_evidencia)
+    if isinstance(cubre_raw, list):
+        cubre_map = {lid: "observado" for lid in cubre_raw}
+    elif isinstance(cubre_raw, dict):
+        cubre_map = cubre_raw
+    else:
+        sys.exit("[FALLO] cubre_por_evidencia debe ser lista o mapa línea→certeza")
+    for lid, certeza in cubre_map.items():
+        if certeza not in CERTEZAS_VALIDAS:
+            sys.exit(f"[FALLO] certeza inválida '{certeza}' para línea {lid}")
+    return plan_por_linea, cubre_map
 
 
 def main() -> None:
@@ -143,7 +155,8 @@ def main() -> None:
 
     verificar_repo_limpio()
 
-    plan_por_linea, cubre_set = cargar_oferta_yaml()
+    plan_por_linea, cubre_map = cargar_oferta_yaml()
+    cubre_set = set(cubre_map.keys())
     print(f"[oferta.yaml] plan_por_linea: {len(plan_por_linea)} entradas, cubre_por_evidencia: {len(cubre_set)} líneas")
 
     db_path = Path(args.db).expanduser()
@@ -202,37 +215,52 @@ def main() -> None:
         if SOL_ID in [a.split()[-1] for a in altas if "nodo" in a]:
             evento(conn, args.actor, "alta_nodo", f"nodo solución {SOL_ID}", nodo_id=SOL_ID)
 
-        # cubre: solo líneas en cubre_por_evidencia (de oferta.yaml)
+        # cubre: solo líneas en cubre_por_evidencia con certeza del mapa
         for (linea_id,) in lineas:
             sufijo = linea_id.replace("linea:coforge:", "")
             if sufijo not in cubre_set:
                 continue
+            certeza_yaml = cubre_map[sufijo]
             rc = conn.execute(
                 "INSERT OR IGNORE INTO relacion (origen, destino, tipo, certeza, fuente, visto_en) "
-                "VALUES (?, ?, 'cubre', 'observado', ?, ?)",
-                (SOL_ID, linea_id, FUENTE, ahora()),
+                "VALUES (?, ?, 'cubre', ?, ?, ?)",
+                (SOL_ID, linea_id, certeza_yaml, FUENTE, ahora()),
             ).rowcount
             if rc == 1:
-                evento(conn, args.actor, "relacion_cubre", f"{SOL_ID} cubre {linea_id}", nodo_id=SOL_ID)
-                altas.append(f"cubre {SOL_ID} → {linea_id}")
+                evento(conn, args.actor, "relacion_cubre",
+                       f"{SOL_ID} cubre {linea_id} (certeza={certeza_yaml})", nodo_id=SOL_ID)
+                altas.append(f"cubre {SOL_ID} → {linea_id} [{certeza_yaml}]")
             else:
                 existian.append(f"cubre {SOL_ID} → {linea_id}")
 
-        # reconciliar: cubre observado que no esté en cubre_por_evidencia → propuesto + evento
+        # reconciliar: actualizar certeza de cubre existentes según mapa
         cubre_en_bd = conn.execute(
-            "SELECT destino FROM relacion WHERE origen=? AND tipo='cubre' AND certeza='observado'",
+            "SELECT destino, certeza FROM relacion WHERE origen=? AND tipo='cubre'",
             (SOL_ID,),
         ).fetchall()
-        for (destino,) in cubre_en_bd:
+        for destino, certeza_bd in cubre_en_bd:
             sufijo = destino.replace("linea:coforge:", "")
             if sufijo not in cubre_set:
-                conn.execute(
-                    "UPDATE relacion SET certeza='propuesto' WHERE origen=? AND destino=? AND tipo='cubre'",
-                    (SOL_ID, destino),
-                )
-                evento(conn, args.actor, "cubre_reconciliado",
-                       f"cubre {SOL_ID}→{destino} → propuesto (no en cubre_por_evidencia)", nodo_id=SOL_ID)
-                altas.append(f"reconciliado cubre→{destino} → propuesto")
+                if certeza_bd != "propuesto":
+                    conn.execute(
+                        "UPDATE relacion SET certeza='propuesto' WHERE origen=? AND destino=? AND tipo='cubre'",
+                        (SOL_ID, destino),
+                    )
+                    evento(conn, args.actor, "cubre_reconciliado",
+                           f"cubre {SOL_ID}→{destino}: {certeza_bd} → propuesto (no en cubre_por_evidencia)",
+                           nodo_id=SOL_ID)
+                    altas.append(f"reconciliado cubre→{destino}: {certeza_bd} → propuesto")
+            else:
+                certeza_yaml = cubre_map[sufijo]
+                if certeza_bd != certeza_yaml:
+                    conn.execute(
+                        "UPDATE relacion SET certeza=? WHERE origen=? AND destino=? AND tipo='cubre'",
+                        (certeza_yaml, SOL_ID, destino),
+                    )
+                    evento(conn, args.actor, "certeza_actualizada",
+                           f"cubre {SOL_ID}→{destino}: {certeza_bd} → {certeza_yaml}",
+                           nodo_id=SOL_ID)
+                    altas.append(f"certeza cubre→{destino}: {certeza_bd} → {certeza_yaml}")
 
         modulos_t01 = [
             "dir:vmi3211028:rag-banking-agent:app",
