@@ -489,14 +489,18 @@ def main() -> None:
 
         # cubre módulo/carpeta → línea (archivos_por_linea de oferta.yaml)
         cubre_arch_count = 0
+        esperadas_mod = set()
         for lid, rutas in archivos_por_linea.items():
             linea_id = f"linea:coforge:{lid}"
             if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (linea_id,)).fetchone():
                 continue
+            sol_certeza = cubre_map.get(lid, "propuesto")
             for ruta in rutas:
                 nid = nodo_id_para_ruta(ruta)
+                esperadas_mod.add((nid, linea_id))
                 existe = ruta_existe_en_repo(ruta)
-                certeza = "observado" if existe else "propuesto"
+                file_certeza = "observado" if existe else "propuesto"
+                certeza = file_certeza if CERTEZA_ORDEN.get(file_certeza, 0) <= CERTEZA_ORDEN.get(sol_certeza, 0) else sol_certeza
                 if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (nid,)).fetchone():
                     tipo = "carpeta" if ruta.endswith("/**") else "modulo"
                     nombre = ruta.rstrip("/*")
@@ -507,17 +511,50 @@ def main() -> None:
                     )
                     evento(conn, args.actor, "alta_nodo", f"nodo {tipo} {nid}", nodo_id=nid)
                     altas.append(f"nodo {nid}")
-                rc = conn.execute(
-                    "INSERT OR IGNORE INTO relacion (origen, destino, tipo, certeza, fuente, visto_en) "
-                    "VALUES (?, ?, 'cubre', ?, ?, ?)",
-                    (nid, linea_id, certeza, FUENTE, ahora()),
-                ).rowcount
-                if rc == 1:
+                existente = conn.execute(
+                    "SELECT certeza FROM relacion WHERE origen=? AND destino=? AND tipo='cubre'",
+                    (nid, linea_id),
+                ).fetchone()
+                if existente:
+                    if existente[0] != certeza:
+                        conn.execute(
+                            "UPDATE relacion SET certeza=? WHERE origen=? AND destino=? AND tipo='cubre'",
+                            (certeza, nid, linea_id),
+                        )
+                        evento(conn, args.actor, "cubre_reconciliado",
+                               f"cubre {nid}→{linea_id}: {existente[0]} → {certeza}",
+                               nodo_id=nid)
+                        altas.append(f"reconciliado cubre {nid}→{linea_id}: {existente[0]} → {certeza}")
+                    else:
+                        existian.append(f"cubre {nid} → {linea_id}")
+                else:
+                    conn.execute(
+                        "INSERT INTO relacion (origen, destino, tipo, certeza, fuente, visto_en) "
+                        "VALUES (?, ?, 'cubre', ?, ?, ?)",
+                        (nid, linea_id, certeza, FUENTE, ahora()),
+                    )
                     evento(conn, args.actor, "relacion_cubre", f"{nid} cubre {linea_id} [{certeza}]", nodo_id=nid)
                     altas.append(f"cubre {nid} → {linea_id} [{certeza}]")
                     cubre_arch_count += 1
-                else:
-                    existian.append(f"cubre {nid} → {linea_id}")
+
+        # reconciliar módulo→línea: relaciones fuera del yaml → propuesto
+        mod_en_bd = conn.execute(
+            "SELECT origen, destino, certeza FROM relacion "
+            "WHERE tipo='cubre' AND destino LIKE 'linea:coforge:%' "
+            "AND origen != ? AND (origen LIKE 'mod:%' OR origen LIKE 'dir:%')",
+            (SOL_ID,),
+        ).fetchall()
+        for origen, destino, certeza_bd in mod_en_bd:
+            if (origen, destino) not in esperadas_mod and certeza_bd != "propuesto":
+                conn.execute(
+                    "UPDATE relacion SET certeza='propuesto' WHERE origen=? AND destino=? AND tipo='cubre'",
+                    (origen, destino),
+                )
+                evento(conn, args.actor, "cubre_reconciliado",
+                       f"cubre {origen}→{destino}: {certeza_bd} → propuesto (fuera de archivos_por_linea)",
+                       nodo_id=origen)
+                altas.append(f"reconciliado cubre {origen}→{destino}: {certeza_bd} → propuesto")
+
         if cubre_arch_count:
             print(f"  [archivos_por_linea] {cubre_arch_count} relaciones cubre módulo→línea creadas")
 
