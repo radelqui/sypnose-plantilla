@@ -6,7 +6,6 @@ import hashlib
 import json
 import operator
 import os
-import posixpath
 import re
 import shlex
 import sys
@@ -124,11 +123,10 @@ def _ssh_al_registro(toks: list[str], cfg: dict) -> str | None:
 
 
 def _bd_remota_del_registro(bd: str, cfg: dict) -> bool:
+    """Compara con '~' expandido al home del destino en los dos lados: `~/sypnose-f1/registry.db` y `/home/sypnose/…` son la misma BD."""
     s = cfg.get("ssh") or {}
     destino, esperada = str(s.get("destino") or ""), str(s.get("db") or "")
-    if bd.startswith("~/") and "@" in destino:
-        bd = f"/home/{destino.split('@')[0]}/{bd[2:]}"
-    return bool(esperada) and posixpath.normpath(bd) == posixpath.normpath(esperada)
+    return bool(esperada) and comun.ruta_remota(bd, destino) == comun.ruta_remota(esperada, destino)
 
 
 def forma_pura(comando: str, comprobacion: str, cwd: str | None, worktree: str, cfg: dict) -> str | None:
