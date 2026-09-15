@@ -1,0 +1,92 @@
+"""Cierra un plan abierto (abierto → cerrado) con evento plan_cerrado.
+
+    python3 cerrar_plan.py --db ~/sypnose-f1/registry.db \
+        --plan PLAN-CS-T01 \
+        --detalle "cerrado por 00-lead por delegación explícita de Carlos; línea firmada 22755"
+"""
+from __future__ import annotations
+
+import argparse
+import sqlite3
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+from barrera import backup_registro, verificar_canonicos_registrados, verificar_repo_limpio
+
+ACTOR = "IA:05-arquitecto-sypnose:claude-opus-4-6"
+
+
+def ahora() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Cierra un plan abierto")
+    ap.add_argument("--db", required=True)
+    ap.add_argument("--plan", required=True, help="plan_id, ej. PLAN-CS-T01")
+    ap.add_argument("--detalle", required=True, help="texto para el evento plan_cerrado")
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+
+    db_path = Path(args.db).expanduser().resolve()
+    if not db_path.exists():
+        sys.exit(f"[FALLO] {db_path} no existe")
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA journal_mode=WAL")
+
+    verificar_repo_limpio()
+    verificar_canonicos_registrados(conn)
+
+    row = conn.execute(
+        "SELECT id, estado, dueno FROM plan WHERE id=?", (args.plan,),
+    ).fetchone()
+    if not row:
+        sys.exit(f"[FALLO] plan {args.plan} no existe")
+    pid, estado, dueno = row
+    if estado == "cerrado":
+        print(f"[INFO] {pid} ya está cerrado")
+        conn.close()
+        return
+    if estado != "abierto":
+        sys.exit(f"[FALLO] {pid} estado={estado}, esperado abierto")
+
+    pendientes = conn.execute(
+        "SELECT COUNT(*) FROM tarea WHERE plan_id=? AND progreso NOT IN ('hecha','devuelta','retirada')",
+        (args.plan,),
+    ).fetchone()[0]
+    if pendientes > 0:
+        print(f"[WARN] {pid} tiene {pendientes} tareas no terminadas")
+
+    if args.dry_run:
+        print(f"[dry-run] cerrar {pid}")
+        conn.close()
+        return
+
+    b = backup_registro(conn, db_path, "cerrar-plan")
+    print(f"[backup] {b}")
+
+    ts = ahora()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "UPDATE plan SET estado='cerrado', cerrado_en=? WHERE id=?",
+            (ts, args.plan),
+        )
+        conn.execute(
+            "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+            (ts, ACTOR, "plan_cerrado", args.plan, args.detalle),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    print(f"[OK] {args.plan} cerrado a las {ts}")
+
+
+if __name__ == "__main__":
+    main()
