@@ -242,7 +242,7 @@ def main() -> None:
                         args.actor,
                         "requisito_cambiado",
                         plan_id,
-                        f"tarea {tid} ({prog}→devuelta){nota_firma} · {viejo_nuevo}",
+                        f"tarea {tid} ({prog}→devuelta){nota_firma} · spec_sha: {spec_sha[:12]} · autor: {spec_autor} · {viejo_nuevo}",
                     ),
                 )
                 print(f"[cascade] tarea {tid} ({prog} → devuelta){nota_firma}")
