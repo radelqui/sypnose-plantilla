@@ -54,9 +54,11 @@ def config() -> dict:
 
 
 def modelo_limpio(modelo: str | None) -> str | None:
+    """Id de modelo sin sufijo [..]; None si no es un id real (p. ej. '<synthetic>' de los mensajes de error del CLI)."""
     if not modelo:
         return None
-    return re.sub(r"\[.*?\]$", "", str(modelo)).strip() or None
+    limpio = re.sub(r"\[.*?\]$", "", str(modelo)).strip()
+    return limpio if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@/-]*", limpio) else None
 
 
 def actor_de(cfg: dict, modelo: str | None) -> str:
@@ -414,6 +416,31 @@ def uso_turno(transcript_path: str | None) -> dict:
             uso["modelo"] = uso["modelo"] or modelo_limpio(msg.get("model"))
             uso["leido"] = True
     return uso
+
+
+def modelo_en_transcript(transcript_path: str | None) -> str | None:
+    """Último modelo visto en el transcript: adjunto 'model' (se escribe tras SessionStart) o message.model de una respuesta."""
+    p = Path(transcript_path) if transcript_path else None
+    if not p or not p.is_file():
+        return None
+    with p.open("rb") as f:
+        tam = f.seek(0, os.SEEK_END)
+        f.seek(max(0, tam - 2_000_000))
+        lineas = f.read().decode("utf-8", errors="replace").splitlines()
+    for linea in reversed(lineas):
+        try:
+            d = json.loads(linea)
+        except json.JSONDecodeError:
+            continue
+        adjunto = d.get("attachment") if isinstance(d.get("attachment"), dict) else {}
+        candidato = None
+        if adjunto.get("type") == "model" and isinstance(adjunto.get("identity"), dict):
+            candidato = modelo_limpio(adjunto["identity"].get("modelId"))
+        elif d.get("type") == "assistant" and isinstance(d.get("message"), dict):
+            candidato = modelo_limpio(d["message"].get("model"))
+        if candidato:
+            return candidato
+    return None
 
 
 def coste_usd(uso: dict, modelo: str | None) -> float | None:

@@ -46,7 +46,9 @@ def main() -> None:
     previo = comun.asegurar_estado(entrada, cfg)
     uso = comun.uso_turno(entrada.get("transcript_path"))
     cuando = comun.ahora()
-    modelo_nuevo = uso["modelo"] if previo.get("modelo") in (None, "desconocido") and uso["modelo"] else None
+    modelo_nuevo = None
+    if previo.get("modelo") in (None, "desconocido"):
+        modelo_nuevo = uso["modelo"] or comun.modelo_en_transcript(entrada.get("transcript_path"))
     salida, interrumpido = salida_de(entrada.get("tool_response"))
     comando = str(datos.get("command", ""))
     actuales = None

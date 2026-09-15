@@ -89,7 +89,7 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
     if not modelo and previo.get("modelo") not in (None, "desconocido"):
         modelo, fuente_modelo = previo["modelo"], "estado previo de la sesión"
     if not modelo:
-        modelo, fuente_modelo = comun.uso_turno(entrada.get("transcript_path"))["modelo"] or "desconocido", "transcript"
+        modelo, fuente_modelo = comun.modelo_en_transcript(entrada.get("transcript_path")) or "desconocido", "transcript"
     estado = {
         "session_id": sid, "carpeta": cfg["carpeta"], "creado": previo.get("creado") or comun.ahora(),
         "modelo": modelo, "modelo_fuente": fuente_modelo, "actor": comun.actor_de(cfg, modelo),
@@ -128,20 +128,21 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
     )
     cuando = comun.ahora()
     ops = [
-        {"op": "actor", "id": estado["actor"], "rol": cfg["carpeta"], "modelo": modelo},
         comun.op_evento(estado["actor"], "sesion_iniciada",
                         f"{entrada.get('source', '?')} · modelo {modelo} ({fuente_modelo}) · tarea {tarea['id']} {req['ref']} · worktree {cfg['worktree']}",
                         p["id"], cuando),
         {"op": "tarea_progreso", "tarea_id": tarea["id"], "progreso": "trabajando", "desde": ["pendiente", "devuelta"],
          "evento": comun.op_evento(estado["actor"], "tarea_trabajando", f"tarea {tarea['id']} {tarea['progreso']} → trabajando", p["id"], cuando)},
     ]
+    if modelo != "desconocido":
+        ops.insert(0, {"op": "actor", "id": estado["actor"], "rol": cfg["carpeta"], "modelo": modelo})
     try:
         r = comun.emitir(cfg, ops)
     except comun.RegistroCaido as e:
         return abortar(estado, cfg, f"REGISTRO SYPNOSE CAÍDO al registrar el arranque: {e}", p["id"], registrar=False)
     except comun.RegistroRechazo as e:
         return abortar(estado, cfg, f"el registro rechazó el arranque de la sesión: {e}", p["id"])
-    if r["resultados"][2]["filas"]:
+    if next(x for x in r["resultados"] if x["op"] == "tarea_progreso")["filas"]:
         estado["tarea"]["progreso"] = "trabajando"
     agente_nota = "" if tarea.get("agente") == estado["actor"] else f" (la tarea está asignada a {tarea.get('agente')})"
     presupuesto = f"{p['cuesta']} USD (plan.cuesta)" if p.get("cuesta") is not None else "sin definir (plan.cuesta vacío)"

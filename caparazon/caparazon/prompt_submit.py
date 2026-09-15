@@ -20,6 +20,19 @@ def main() -> None:
         estado = brief.construir_estado(entrada, cfg)
     if estado.get("abortado"):
         comun.bloquear(f"CAPARAZÓN ABORTADO: prompt bloqueado.\n{estado['motivo']}")
+    if estado.get("modelo") in (None, "desconocido"):
+        observado = comun.modelo_en_transcript(entrada.get("transcript_path"))
+        if observado:
+            def cambio(e: dict) -> None:
+                e.update(modelo=observado, modelo_fuente="transcript", actor=comun.actor_de(cfg, observado))
+
+            estado = comun.actualizar_estado(estado["session_id"], cambio)
+            try:
+                comun.emitir(cfg, [{"op": "actor", "id": estado["actor"], "rol": cfg["carpeta"], "modelo": observado},
+                                   comun.op_evento(estado["actor"], "modelo_observado", f"modelo real {observado} leído del transcript",
+                                                   estado["plan"]["id"])])
+            except (comun.RegistroCaido, comun.RegistroRechazo) as e:
+                comun.bloquear(f"REGISTRO SYPNOSE: no se pudo registrar el modelo real ({e}); prompt bloqueado (FAIL LOUD).")
     p, t, r = estado["plan"], estado["tarea"], estado["requisito"]
     contexto = (f"Requisito vigente de la tarea {t['id']} ({p['id']}/{r['ref']}), texto literal del registro SYPNOSE: {r['ears']}\n"
                 f"Comprobación: {r['comprobacion']}\n"
