@@ -52,7 +52,7 @@ def evento(conn, actor, accion, detalle, nodo_id=None, plan_id=None):
     )
 
 
-REPO_RAG = Path.home() / "rag-banking-agent"
+REPO_RAG = Path(__file__).resolve().parent.parent / "rag-banking-agent"
 
 NODO_A_RUTA = {
     "dir:": lambda nid: nid.split(":", 3)[-1] if nid.count(":") >= 3 else None,
