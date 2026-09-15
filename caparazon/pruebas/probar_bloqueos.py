@@ -897,6 +897,31 @@ def main() -> None:
                               "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n", encoding="utf-8")
         caso("B6.29d commit-msg rechaza Plan: PLAN-FALSO (no está en planes_trabajables)", dir_capa, "commit_msg.py",
              None, env, lambda rc, o, e: rc == 1 and "PLAN-FALSO" in e, args=(str(msg_14_bad),))
+
+        # B15 (lead, 15-sep): SSH con git de escritura bloqueado por el cerco. SSH solo para scripts de plantilla/ contra el registro.
+        pre_14 = {**base_14, "hook_event_name": "PreToolUse", "tool_use_id": "toolu_b15"}
+        caso("B6.30 PreToolUse: ssh con 'git commit' remoto → bloqueada por el cerco", dir_capa, "pre_tool_use.py",
+             {**pre_14, "tool_name": "Bash", "tool_input": {"command": 'ssh sypnose@62.171.147.46 "cd ~/coforge-santander/plantilla && git add . && git commit -m test"'}},
+             env, lambda rc, o, e: rc == 2 and "git de escritura por SSH" in e)
+        caso("B6.30b PreToolUse: ssh con 'git -C ~/sypnose-f1 push' → bloqueada", dir_capa, "pre_tool_use.py",
+             {**pre_14, "tool_name": "Bash", "tool_input": {"command": 'ssh -i ~/.ssh/id_ed25519 -p 2024 sypnose@62.171.147.46 "git -C ~/sypnose-f1 push origin main"'}},
+             env, lambda rc, o, e: rc == 2 and "git de escritura por SSH" in e)
+        caso("B6.30c PreToolUse: ssh con 'git checkout' remoto → bloqueada", dir_capa, "pre_tool_use.py",
+             {**pre_14, "tool_name": "Bash", "tool_input": {"command": 'ssh sypnose@62.171.147.46 "git checkout main"'}},
+             env, lambda rc, o, e: rc == 2 and "git de escritura por SSH" in e)
+        caso("B6.31 PreToolUse (control): ssh con 'git log' remoto → pasa (lectura)", dir_capa, "pre_tool_use.py",
+             {**pre_14, "tool_name": "Bash", "tool_input": {"command": 'ssh sypnose@62.171.147.46 "git -C ~/coforge-santander/plantilla log --oneline -5"'}},
+             env, lambda rc, o, e: rc == 0)
+        caso("B6.31b PreToolUse (control): ssh con sqlite3 → pasa", dir_capa, "pre_tool_use.py",
+             {**pre_14, "tool_name": "Bash", "tool_input": {"command": "ssh sypnose@62.171.147.46 \"sqlite3 ~/sypnose-f1/registry.db 'SELECT count(*) FROM evento'\""}},
+             env, lambda rc, o, e: rc == 0)
+        caso("B6.31c PreToolUse (control): ssh con python3 plantilla/ → pasa", dir_capa, "pre_tool_use.py",
+             {**pre_14, "tool_name": "Bash", "tool_input": {"command": 'ssh sypnose@62.171.147.46 "python3 plantilla/cargar_requisito.py PLAN-CS-T01"'}},
+             env, lambda rc, o, e: rc == 0)
+        caso("B6.31d PreToolUse (control): ssh con git status remoto → pasa (lectura)", dir_capa, "pre_tool_use.py",
+             {**pre_14, "tool_name": "Bash", "tool_input": {"command": 'ssh sypnose@62.171.147.46 "git status"'}},
+             env, lambda rc, o, e: rc == 0)
+
         # Limpieza: eliminar plan T03 para no afectar los tests de barrera
         with sqlite3.connect(db) as c:
             c.execute("DELETE FROM tarea WHERE plan_id='PLAN-CS-T03'")
