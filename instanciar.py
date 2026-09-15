@@ -55,19 +55,26 @@ def hash_oferta(texto: str) -> str:
 def verificar_git_limpio() -> None:
     try:
         r = subprocess.run(
-            ["git", "-C", str(PLANTILLA_DIR), "status", "--porcelain", "oferta-coforge.txt"],
+            ["git", "-C", str(PLANTILLA_DIR), "diff", "--quiet", "HEAD"],
             capture_output=True, text=True, timeout=10,
         )
     except FileNotFoundError:
         sys.exit("[FALLO] git no encontrado; plantilla/ debe ser su propio repo git")
     except subprocess.TimeoutExpired:
-        sys.exit("[FALLO] git status timeout")
+        sys.exit("[FALLO] git diff timeout")
     if r.returncode != 0:
-        sys.exit(f"[FALLO] git -C plantilla status falló (rc={r.returncode}): {r.stderr.strip()}\n"
-                 f"¿plantilla/ tiene 'git init'?")
-    if r.stdout.strip():
-        sys.exit(f"[FALLO] oferta-coforge.txt tiene cambios sin commit: {r.stdout.strip()}\n"
-                 f"Haz 'git add + git commit' en el repo plantilla antes de ejecutar instanciar.py.")
+        cambios = subprocess.run(
+            ["git", "-C", str(PLANTILLA_DIR), "diff", "--name-only", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+        sys.exit(f"[FALLO] repo plantilla tiene cambios sin commit:\n{cambios.stdout.strip()}\n"
+                 f"Haz 'git add + git commit' antes de ejecutar instanciar.py.")
+    staged = subprocess.run(
+        ["git", "-C", str(PLANTILLA_DIR), "diff", "--cached", "--quiet"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if staged.returncode != 0:
+        sys.exit("[FALLO] repo plantilla tiene cambios staged sin commit. Haz 'git commit' primero.")
 
 
 def obtener_commit_head() -> str:
