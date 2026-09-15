@@ -1,9 +1,10 @@
-"""Rectificación X6v2: restaura filas de evidencia modificadas en sitio y quita evento: no cualificados.
+"""Rectificación X6v2: restaura filas de evidencia modificadas en sitio.
 
 (1) Restaura evidencia 173 (T06): fuente 'INVALIDA:07-verificador/...' → original.
 (2) Restaura gh:run:34870628891 en T07 y T14: quita prefijo INVALIDA:.
-(3) Elimina evidence rows evento:<id> de T06 que no cumplen: accion='verificado',
-    detalle CUMPLE (no NO CUMPLE), actor 07 ratificado. Solo evento:22465 se queda.
+(3) [RETIRADO] El DELETE de filas 190-194 era incorrecto — violaba la regla no-DELETE.
+    Las filas fueron reinsertadas por restaurar_evidencia_x6v2.py.
+    El filtro de evento:<id> en validar_fuente ya descarta las no cualificadas.
 (4) Evento de rectificación sobre el 22597 (texto "07 la invalida" incorrecto).
 
 Guardia idempotente: evento 'rectificar_x6v2'.
@@ -29,9 +30,6 @@ EVIDENCIA_173_ORIGINAL = "07-verificador/VERIFICACION.md@c5d232412bce"
 
 GH_RUN_OLD_INVALIDA = "INVALIDA:gh:run:34870628891"
 GH_RUN_OLD_ORIGINAL = "gh:run:34870628891"
-
-EVENTO_22465 = 22465  # verificado + CUMPLE — the only qualifying evento:
-EVENTOS_QUITAR = [22376, 22377, 22456, 22458, 22464]
 
 EVENTO_RECTIFICAR = 22597
 
@@ -66,7 +64,6 @@ def main() -> None:
         print(f"[dry-run] restaurar evidencia 173: {EVIDENCIA_173_INVALIDA} → {EVIDENCIA_173_ORIGINAL}")
         print(f"[dry-run] restaurar T07: {GH_RUN_OLD_INVALIDA} → {GH_RUN_OLD_ORIGINAL}")
         print(f"[dry-run] restaurar T14: {GH_RUN_OLD_INVALIDA} → {GH_RUN_OLD_ORIGINAL}")
-        print(f"[dry-run] eliminar evento: evidence {EVENTOS_QUITAR} de T06")
         print(f"[dry-run] rectificar evento {EVENTO_RECTIFICAR}")
         conn.close()
         return
@@ -92,17 +89,7 @@ def main() -> None:
             ).rowcount
             print(f"[restaurada] {plan}: {rc2} filas → {GH_RUN_OLD_ORIGINAL}")
 
-        # (3) Eliminar evidence rows evento: no cualificados de T06
-        eliminados = 0
-        for eid in EVENTOS_QUITAR:
-            rc3 = conn.execute(
-                "DELETE FROM evidencia WHERE plan_id='PLAN-CS-T06' AND fuente=?",
-                (f"evento:{eid}",),
-            ).rowcount
-            if rc3:
-                eliminados += rc3
-                print(f"  [del] PLAN-CS-T06: evento:{eid}")
-        print(f"[T06] {eliminados} evento: no cualificados eliminados (quedan: evento:{EVENTO_22465})")
+        # (3) [RETIRADO — DELETE era incorrecto; filas reinsertadas por restaurar_evidencia_x6v2.py]
 
         # (4) Rectificación del evento 22597
         conn.execute(

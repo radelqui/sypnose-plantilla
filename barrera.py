@@ -31,6 +31,7 @@ PRECIOS_PATH = PLANTILLA_DIR / "precios.yaml"
 
 
 def verificar_repo_limpio() -> None:
+    verificar_sin_delete()
     for f in CANONICOS:
         try:
             r = subprocess.run(
@@ -177,6 +178,32 @@ def backup_registro(conn: sqlite3.Connection, db_path: Path, sufijo: str = "pre"
         sys.exit(f"[FALLO] backup vacío o no creado: {destino}")
     print(f"[backup] {destino} ({destino.stat().st_size} bytes)")
     return destino
+
+
+_RE_DELETE_PROHIBIDO = re.compile(
+    r"\bDELETE\s+FROM\s+(evidencia|evento|afirmacion|relacion|ancla)\b",
+    re.IGNORECASE,
+)
+
+HISTORICO_DIR = PLANTILLA_DIR / "historico"
+
+
+def verificar_sin_delete() -> None:
+    """Abort if any plantilla script contains DELETE FROM on protected tables."""
+    violaciones = []
+    for d in (PLANTILLA_DIR, HISTORICO_DIR):
+        if not d.exists():
+            continue
+        for py in d.glob("*.py"):
+            texto = py.read_text(encoding="utf-8", errors="replace")
+            for m in _RE_DELETE_PROHIBIDO.finditer(texto):
+                linea = texto[:m.start()].count("\n") + 1
+                violaciones.append(f"{py.name}:{linea}: {m.group(0)}")
+    if violaciones:
+        sys.exit(
+            "[FALLO] DELETE FROM en tabla protegida (regla: solo INSERT):\n  "
+            + "\n  ".join(violaciones)
+        )
 
 
 def verificar_oferta_canonica(conn, h: str) -> None:
