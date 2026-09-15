@@ -1,5 +1,5 @@
-"""PostToolUse (B4): evento en vivo al registro por cada herramienta (ruta, hora, tokens y coste del turno) + auditoría git del cerco.
-Si el registro no responde, la sesión se para (continue:false)."""
+"""PostToolUse (B4): evento por herramienta (ruta, hora, tokens y coste del turno) a la cola local + auditoría git del cerco.
+El envío al registro lo hacen flush.py (async, cada 60 s) y el Stop. Si el último envío falló, lo avisa en pantalla."""
 from __future__ import annotations
 
 import json
@@ -26,24 +26,13 @@ def salida_de(respuesta) -> tuple[str, bool]:
     return str(respuesta or ""), False
 
 
-def parar(mensaje: str) -> None:
-    comun.salir_json({"continue": False, "stopReason": mensaje})
-
-
 def main() -> None:
     entrada = comun.leer_stdin()
     cfg = comun.config()
-    sid = entrada.get("session_id") or "sin-sesion"
     herramienta = entrada.get("tool_name", "?")
     datos = entrada.get("tool_input") or {}
-    try:
-        comun.salud(cfg)
-    except comun.RegistroCaido as e:
-        previo = comun.leer_estado(sid) or {}
-        comun.guardar_pendientes(comun.ops_bloqueo(previo.get("actor") or comun.actor_de(cfg, None), "registro",
-                                                   comun.plan_de(previo, cfg), f"sesión {sid[:8]} parada tras {herramienta}: registro caído ({e})"))
-        parar(f"REGISTRO SYPNOSE CAÍDO: sesión parada tras {herramienta} (FAIL LOUD). {e}. Túnel: {comun.comando_tunel(cfg)}")
     previo = comun.asegurar_estado(entrada, cfg)
+    sid = previo["session_id"]
     uso = comun.uso_turno(entrada.get("transcript_path"))
     cuando = comun.ahora()
     modelo_nuevo = None
@@ -52,7 +41,7 @@ def main() -> None:
     salida, interrumpido = salida_de(entrada.get("tool_response"))
     comando = str(datos.get("command", ""))
     actuales = None
-    if not previo.get("abortado") and (herramienta in ESCRITURAS or herramienta in ("Bash", "PowerShell")):
+    if not previo.get("abortado") and herramienta in ESCRITURAS + ("Bash", "PowerShell"):
         actuales = cerco.cambios_git(previo["worktree"])
     nuevos_fuera: list[str] = []
 
@@ -96,16 +85,15 @@ def main() -> None:
     if nuevos_fuera:
         ops += comun.ops_bloqueo(estado["actor"], "cerco", plan_id,
                                  f"auditoría git tras {herramienta}: cambios fuera de archivos_permitidos {nuevos_fuera}")
-    try:
-        comun.emitir(cfg, ops)
-    except comun.RegistroCaido as e:
-        parar(f"REGISTRO SYPNOSE CAÍDO al registrar {herramienta}: sesión parada (FAIL LOUD). {e}")
-    except comun.RegistroRechazo as e:
-        parar(f"El registro rechazó el evento de {herramienta}: sesión parada. {e}")
+    comun.encolar(sid, ops)
     if nuevos_fuera:
         comun.bloquear(f"CERCO (auditoría git): {herramienta} dejó cambios fuera de archivos_permitidos en {estado['worktree']}: "
-                       f"{', '.join(nuevos_fuera)}. Reviértelos con `git checkout -- <ruta>` o `git clean -f -- <ruta>`. Registrado como bloqueo:cerco.")
+                       f"{', '.join(nuevos_fuera)}. Reviértelos con `git checkout -- <ruta>` o `git clean -f -- <ruta>`. "
+                       "bloqueo:cerco anotado en la cola del caparazón.")
+    aviso = comun.aviso_cola(cfg, sid)
+    if aviso:
+        comun.salir_json({"systemMessage": aviso})
 
 
 if __name__ == "__main__":
-    comun.ejecutar(main, parar)
+    comun.ejecutar(main, lambda m: comun.salir_json({"systemMessage": m}))
