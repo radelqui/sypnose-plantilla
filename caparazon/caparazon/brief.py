@@ -136,6 +136,13 @@ def github(worktree: str) -> str:
     return f"rama {rama}: CI {resumen_run(run_rama)} · {pr} · main: CI {resumen_run(run_main)}"
 
 
+def unir_nota(nota: str, texto: str) -> str:
+    """Añade un aviso de la cola a la nota del brief sin repetir la explicación del modo prueba."""
+    if texto.startswith("MODO PRUEBA") and "MODO PRUEBA" in nota:
+        return nota
+    return " · ".join(x for x in (nota, texto) if x)
+
+
 def envio_inicial(cfg: dict) -> str:
     resultados = comun.vaciar_todas(cfg, "arranque")
     partes = []
@@ -145,6 +152,10 @@ def envio_inicial(cfg: dict) -> str:
     caidas = sum(1 for r in resultados if r.get("caido_registrado"))
     if caidas:
         partes.append(f"bloqueo:registro_caido registrado ({caidas} cola(s) retenida(s) por registro caído)")
+    pruebas = [r for r in resultados if r["estado"] == "prueba"]
+    if pruebas:
+        partes.append(comun.texto_fallo_cola(cfg, {**pruebas[0], "pendientes": sum(r["pendientes"] for r in pruebas),
+                                                   "cola": pruebas[0]["cola"] if len(pruebas) == 1 else f"{len(pruebas)} colas en {comun.COLA_DIR}"}))
     partes += [comun.texto_fallo_cola(cfg, r) for r in resultados if r["estado"] in ("fallo", "rechazo")]
     return " · ".join(p for p in partes if p)
 
@@ -156,7 +167,7 @@ def abortar(estado: dict, cfg: dict, motivo: str, plan_id: str | None, nota_cola
         comun.encolar(sid, comun.ops_bloqueo(estado["actor"], "brief", plan_id, f"sesión {sid[:8]} sin trabajo permitido: {motivo}"))
         estado["bloqueo_brief_emitido"] = True
         r = comun.vaciar(cfg, sid, "arranque")
-        nota_cola = " · ".join(x for x in (nota_cola, comun.texto_fallo_cola(cfg, r)) if x)
+        nota_cola = unir_nota(nota_cola, comun.texto_fallo_cola(cfg, r))
     estado["nota_cola"] = nota_cola
     estado["brief"] = (f"═══ BRIEF CAPARAZÓN · {cfg['carpeta']} · ABORTADO ═══\nActor: {estado['actor']}\nMotivo: {motivo}\n"
                        + (f"Cola del caparazón: {nota_cola}\n" if nota_cola else "")
@@ -235,7 +246,7 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
         with contextlib.suppress(comun.RegistroCaido, KeyError, StopIteration):
             fresco = comun.leer_registro(cfg, "/plan/" + urllib.parse.quote(p["id"], safe=""))
             estado["tarea"]["progreso"] = next(t["progreso"] for t in fresco["tareas"] if t["id"] == tarea["id"])
-    nota_cola = " · ".join(x for x in (nota_cola, comun.texto_fallo_cola(cfg, r)) if x)
+    nota_cola = unir_nota(nota_cola, comun.texto_fallo_cola(cfg, r))
     estado["nota_cola"] = nota_cola
     agente_nota = "" if tarea.get("agente") == estado["actor"] else f" (la tarea está asignada a {tarea.get('agente')})"
     presupuesto = f"{p['cuesta']} USD (plan.cuesta)" if p.get("cuesta") is not None else "sin definir (plan.cuesta vacío)"
