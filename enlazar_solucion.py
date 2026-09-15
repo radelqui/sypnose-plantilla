@@ -246,18 +246,18 @@ def _gh_run_success(run_id: str) -> bool:
     try:
         r = subprocess.run(
             ["gh", "api", f"repos/{GH_REPO}/actions/runs/{run_id}",
-             "--jq", "[.conclusion, .status] | @tsv"],
+             "--jq", '{conclusion: (.conclusion // "none"), status: (.status // "none")}'],
             capture_output=True, text=True, timeout=30,
         )
         if r.returncode != 0:
             return False
-        parts = r.stdout.strip().split("\t")
-        conclusion = parts[0] if parts else ""
-        status = parts[1] if len(parts) > 1 else ""
+        import json as _json
+        data = _json.loads(r.stdout.strip())
+        conclusion = data.get("conclusion", "")
+        status = data.get("status", "")
         if conclusion == "success":
             return True
-        # Deploy waiting for human approval = CI jobs passed
-        if conclusion == "action_required" or status == "waiting":
+        if status == "waiting" or conclusion == "action_required":
             return True
         return False
     except Exception:
