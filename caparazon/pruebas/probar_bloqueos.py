@@ -265,6 +265,30 @@ def main() -> None:
         caso("B3.14 PreToolUse: git worktree add con -b pone el worktree en la ruta, no en la rama → la ruta de fuera se bloquea", dir_capa,
              "pre_tool_use.py", {**pre, "tool_name": "Bash", "tool_input": {"command": "git worktree add -b nueva ../otro-wt main"}}, env,
              lambda rc, o, e: rc == 2 and en_mensaje(os.path.join(Path(wt).parent, "otro-wt")) in e)
+        # B11 (lead, 15-sep; evento 22672): el cerco lee el comando entero. Los cuerpos de heredoc son datos, y si no puede leer el comando
+        # bloquea con un mensaje claro en vez de partir por espacios y adivinar rutas.
+        mensaje_02 = "\n".join([
+            'fix(spec): R1 comprobación sin -q (pytest.ini ya trae -q, -q doble ocultaba "N passed")', "",
+            "Hallazgo del Lead sobre la ENTREGA real de la tarea 48: con `pytest.ini`",
+            "(`addopts = -q`) ya aplicando -q por defecto, la comprobación de R1 pedía otro",
+            "`-q` explícito -> pytest sube a -qq y deja de imprimir la línea `N passed`,",
+            "así que la evidencia guardada solo tenía los puntos, sin cifra verificable.", "",
+            "Chat: 02-backend-api", "Model: claude-sonnet-5", "Plan: PLAN-CS-T01", "Tarea: 49", "Co-Authored-By: Claude <noreply@anthropic.com>"])
+        commit_02 = f'cd "/c/MICD/Coforge Santander/02-backend-api/wt-plantilla" && git commit -m "$(cat <<\'EOF\'\n{mensaje_02}\nEOF\n)" 2>&1'
+        caso("B3.20 PreToolUse: git commit con heredoc en -m que menciona '->', pytest y una ruta con espacio (el commit real de 02, evento 22672) → pasa",
+             dir_capa, "pre_tool_use.py", {**pre, "tool_name": "Bash", "tool_input": {"command": commit_02}}, env, lambda rc, o, e: rc == 0)
+        caso("B3.21 PreToolUse: cat <<'EOF' > ../_centinela_fuera.txt con cuerpo → sigue bloqueado por la redirección real, no por el cuerpo",
+             dir_capa, "pre_tool_use.py", {**pre, "tool_name": "Bash", "tool_input": {"command": "cat <<'EOF' > ../_centinela_fuera.txt\nhola -> pytest\nEOF"}},
+             env, lambda rc, o, e: rc == 2 and en_mensaje(centinela) in e and "pytest" not in e)
+        caso("B3.22 PreToolUse: comando con una comilla sin cerrar → bloqueado con un mensaje que dice qué hacer", dir_capa, "pre_tool_use.py",
+             {**pre, "tool_name": "Bash", "tool_input": {"command": 'echo "hola > ../_centinela_fuera.txt'}}, env,
+             lambda rc, o, e: rc == 2 and "no puede leer este comando" in e and "git commit -F" in e)
+        caso("B3.23 PreToolUse: la orden de después del terminador del heredoc sí se analiza → bloqueada", dir_capa, "pre_tool_use.py",
+             {**pre, "tool_name": "Bash", "tool_input": {"command": "cat <<EOF > /dev/null\nnada\nEOF\necho x > ../_centinela_fuera.txt"}}, env,
+             lambda rc, o, e: rc == 2 and en_mensaje(centinela) in e)
+        caso("B3.24 PreToolUse: un <<EOF dentro de comillas no es heredoc y no esconde la línea siguiente → bloqueada", dir_capa, "pre_tool_use.py",
+             {**pre, "tool_name": "Bash", "tool_input": {"command": 'echo "texto <<EOF"\necho x > ../_centinela_fuera.txt\nEOF'}}, env,
+             lambda rc, o, e: rc == 2 and en_mensaje(centinela) in e)
     post = {**base, "hook_event_name": "PostToolUse", "tool_use_id": "toolu_prueba", "prompt_id": "prompt-prueba"}
     caso("B4.1 PostToolUse: evento a la cola local, sin tocar el registro", dir_capa, "post_tool_use.py",
          {**post, "tool_name": "Write", "tool_input": {"file_path": permitido, "content": "..."},

@@ -92,14 +92,130 @@ def veredicto(ruta: str, cwd: str, worktree: str, permitidos: list[str], extra_p
     return None
 
 
-def _tokens(linea: str) -> list[str]:
+class ComandoIlegible(ValueError):
+    """El cerco no puede tokenizar el comando. Nunca adivina rutas (B11): quien llame bloquea con un mensaje claro."""
+
+
+HEREDOC = re.compile(r"""<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|([A-Za-z0-9_.-]+))""")
+
+
+def _preparar(comando: str) -> str:
+    """Texto para shlex, siguiendo las comillas como bash (B11). Hace cuatro cosas:
+    - quita los cuerpos de heredoc, que son datos y no órdenes;
+    - quita los comentarios y las continuaciones de línea;
+    - convierte en ';' los saltos de línea que separan órdenes;
+    - trata como heredoc un `<<` dentro de $(…) o `…`, pero no uno dentro de comillas ni dentro de $((…))."""
+    out, pila, pendientes, i, n = [], ["N"], [], 0, len(comando)
+    while i < n:
+        c, cima = comando[i], pila[-1]
+        if c == "\n":
+            j = i + 1
+            for delimitador, con_tabs in pendientes:
+                while j < n:
+                    fin = comando.find("\n", j)
+                    linea = comando[j:] if fin < 0 else comando[j:fin]
+                    j = n if fin < 0 else fin + 1
+                    if (linea.lstrip("\t") if con_tabs else linea) == delimitador:
+                        break
+            pendientes = []
+            out.append("\n" if cima in ("S", "D") else " ; ")
+            i = j
+            continue
+        if cima == "S":
+            if c == "'":
+                pila.pop()
+            out.append(c)
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            if comando[i + 1] != "\n":
+                out.append(comando[i:i + 2])
+            i += 2
+            continue
+        if cima == "A":
+            if comando.startswith("))", i):
+                pila.pop()
+                out.append("))")
+                i += 2
+            else:
+                out.append(c)
+                i += 1
+            continue
+        if cima == "D":
+            if c == '"':
+                pila.pop()
+            elif comando.startswith("$((", i) or comando.startswith("$(", i):
+                pila.append("A" if comando.startswith("$((", i) else "C")
+                out.append(comando[i:i + (3 if pila[-1] == "A" else 2)])
+                i += 3 if pila[-1] == "A" else 2
+                continue
+            elif c == "`":
+                pila.append("B")
+            out.append(c)
+            i += 1
+            continue
+        # N (fuera de comillas), C ($(…)), P ((…)) y B (`…`)
+        if c == "#" and (not out or out[-1][-1:] in (" ", "\t", ";", "&", "|", "(")):
+            fin = comando.find("\n", i)
+            i = n if fin < 0 else fin
+            continue
+        if comando.startswith("<<", i) and not comando.startswith("<<<", i) and (m := HEREDOC.match(comando, i)):
+            pendientes.append((m.group(2) or m.group(3) or m.group(4), m.group(1) == "-"))
+            out.append(m.group(0))
+            i = m.end()
+            continue
+        if comando.startswith("$((", i) or comando.startswith("((", i):
+            largo = 3 if c == "$" else 2
+            pila.append("A")
+            out.append(comando[i:i + largo])
+            i += largo
+            continue
+        if comando.startswith("$(", i):
+            pila.append("C")
+            out.append("$(")
+            i += 2
+            continue
+        if c == "'":
+            pila.append("S")
+        elif c == '"':
+            pila.append("D")
+        elif c == "(":
+            pila.append("P")
+        elif c == ")" and cima in ("C", "P"):
+            pila.pop()
+        elif c == "`":
+            if cima == "B":
+                pila.pop()
+            else:
+                pila.append("B")
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _tokens(comando: str) -> list[str]:
+    """Tokens del comando entero (B11): sin heredocs y con las comillas respetadas aunque abarquen varias líneas. Si shlex no puede,
+    lanza ComandoIlegible. Antes se partía por espacios: 'Coforge Santander' se rompía y el cerco adivinaba rutas."""
+    lx = shlex.shlex(_preparar(comando), posix=True, punctuation_chars=";&|<>")
+    lx.whitespace_split = True
+    lx.escape = ""
+    lx.commenters = ""
     try:
-        lx = shlex.shlex(linea, posix=True, punctuation_chars=";&|<>")
-        lx.whitespace_split = True
-        lx.escape = ""
         return list(lx)
-    except ValueError:
-        return linea.split()
+    except ValueError as e:
+        raise ComandoIlegible(str(e)) from None
+
+
+def _segmentos(comando: str) -> list[list[str]]:
+    segmentos, segmento = [], []
+    for t in _tokens(comando):
+        if t in SEPARADORES:
+            segmentos.append(segmento)
+            segmento = []
+        else:
+            segmento.append(t)
+    segmentos.append(segmento)
+    return segmentos
 
 
 def _segmento(seg: list[str], cwd: str, profundidad: int) -> tuple[list[str], str]:
@@ -182,23 +298,15 @@ def _segmento(seg: list[str], cwd: str, profundidad: int) -> tuple[list[str], st
 
 
 def objetivos_shell(comando: str, cwd: str, profundidad: int = 0) -> list[str]:
-    """Rutas absolutas normalizadas que el comando podría escribir (heurística; la auditoría git lo complementa)."""
+    """Rutas absolutas normalizadas que el comando podría escribir (heurística; la auditoría git lo complementa). Si el comando no se
+    puede tokenizar, lanza ComandoIlegible."""
     objetivos = []
-    for linea in comando.splitlines():
-        segmento, segmentos = [], []
-        for t in _tokens(linea):
-            if t in SEPARADORES:
-                segmentos.append(segmento)
-                segmento = []
-            else:
-                segmento.append(t)
-        segmentos.append(segmento)
-        for seg in segmentos:
-            nuevos, cwd = _segmento(seg, cwd, profundidad)
-            # norm() entiende /c/… de Git Bash, ~ y rutas relativas al cwd de ese punto del comando. Con os.path.join, en Python 3.13
-            # (os.path.isabs('/c/…') es False) /c/MICD/… acababa en C:\c\MICD\… y ~/x quedaba dentro del worktree.
-            objetivos += [n if n.strip().lower() in INOCUOS else GIT_C + norm(n[len(GIT_C):], cwd) if n.startswith(GIT_C) else norm(n, cwd)
-                          for n in nuevos]
+    for seg in _segmentos(comando):
+        nuevos, cwd = _segmento(seg, cwd, profundidad)
+        # norm() entiende /c/… de Git Bash, ~ y rutas relativas al cwd de ese punto del comando. Con os.path.join, en Python 3.13
+        # (os.path.isabs('/c/…') es False) /c/MICD/… acababa en C:\c\MICD\… y ~/x quedaba dentro del worktree.
+        objetivos += [n if n.strip().lower() in INOCUOS else GIT_C + norm(n[len(GIT_C):], cwd) if n.startswith(GIT_C) else norm(n, cwd)
+                      for n in nuevos]
     return objetivos
 
 
@@ -292,20 +400,12 @@ def solo_lectura(comando: str) -> bool:
     (git solo en sus formas de consulta). Lo que no se reconoce cuenta como un cambio."""
     if "$(" in comando or "`" in comando:
         return False
-    if any(not o.startswith(GIT_C) and o.strip().lower() not in INOCUOS for o in objetivos_shell(comando, os.getcwd())):
-        return False
-    for linea in comando.splitlines():
-        segmento, segmentos = [], []
-        for t in _tokens(linea):
-            if t in SEPARADORES:
-                segmentos.append(segmento)
-                segmento = []
-            else:
-                segmento.append(t)
-        segmentos.append(segmento)
-        if not all(_segmento_lectura(s) for s in segmentos):
+    try:
+        if any(not o.startswith(GIT_C) and o.strip().lower() not in INOCUOS for o in objetivos_shell(comando, os.getcwd())):
             return False
-    return True
+        return all(_segmento_lectura(s) for s in _segmentos(comando))
+    except ComandoIlegible:
+        return False
 
 
 def cambios_git(worktree: str) -> set[str] | None:
