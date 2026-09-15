@@ -82,10 +82,16 @@ def main() -> None:
         fallos.append(f"Chat: debe ser {cfg['carpeta']} (llegó '{campos['Chat']}')")
     if campos.get("Model") and not re.fullmatch(r"claude-[a-z0-9.-]+", campos["Model"]):
         fallos.append(f"Model: debe ser el id del modelo, p. ej. claude-sonnet-5 (llegó '{campos['Model']}')")
-    if plan_vigente and campos.get("Plan") and campos["Plan"] != plan_vigente:
-        fallos.append(f"Plan: debe ser el plan abierto {plan_vigente} (llegó '{campos['Plan']}')")
-    if tarea and campos.get("Tarea") and campos["Tarea"] not in (str(tarea["id"]), f"{plan_vigente}/{tarea['req_ref']}"):
-        fallos.append(f"Tarea: debe ser {tarea['id']} o {plan_vigente}/{tarea['req_ref']} (llegó '{campos['Tarea']}')")
+    planes_ok = [p["id"] for p in estado.get("planes_trabajables") or []] if not estado.get("abortado") else []
+    if not planes_ok and plan_vigente:
+        planes_ok = [plan_vigente]
+    if planes_ok and campos.get("Plan") and campos["Plan"] not in planes_ok:
+        fallos.append(f"Plan: debe ser uno de {', '.join(planes_ok)} (llegó '{campos['Plan']}')")
+    tareas_ok = {str(t["id"]) for t in estado.get("tareas_trabajables") or []} if not estado.get("abortado") else set()
+    if tarea:
+        tareas_ok |= {str(tarea["id"]), f"{plan_vigente}/{tarea['req_ref']}"}
+    if tareas_ok and campos.get("Tarea") and campos["Tarea"] not in tareas_ok:
+        fallos.append(f"Tarea: debe ser una de las trabajables {', '.join(sorted(tareas_ok))} (llegó '{campos['Tarea']}')")
     if not fallos:
         reconocidos = trailers_git(mensaje)
         if reconocidos is not None and not set(CAMPOS) <= reconocidos:

@@ -40,7 +40,7 @@ def main() -> None:
     contexto = (f"Requisito vigente de la tarea {t['id']} ({p['id']}/{r['ref']}), texto literal del registro SYPNOSE: {r['ears']}\n"
                 f"Comprobación: {r['comprobacion']}\n"
                 f"Archivos permitidos dentro de {estado['worktree']}: {', '.join(estado['permitidos'])}")
-    listado = brief.listado_tareas(estado.get("tareas_trabajables") or [], p["id"])
+    listado = brief.listado_tareas(estado.get("tareas_trabajables") or [])
     if listado:
         contexto = f"{contexto}\n{listado}"
     if notas:

@@ -20,6 +20,7 @@ MARCA_ENTREGA = re.compile(r"(?m)^[ \t>#*_-]*ENTREGA\b")
 MARCA_PREGUNTA = re.compile(r"(?m)^[ \t>#*_-]*(PREGUNTA|BLOQUEADO)\s*:\s*(.+)$")
 MARCA_LECCION = re.compile(r"(?mi)^[ \t>#*_-]*LECCI[ÓO]N\s*:\s*(.+)$")
 MARCA_TAREA = re.compile(r"(?mi)^[ \t>#*_-]*Tarea\s*:\s*(\d+)\s*$")
+MARCA_PLAN = re.compile(r"(?mi)^[ \t>#*_-]*Plan\s*:\s*([\w-]+)\s*$")
 
 
 def compacto(texto: str) -> str:
@@ -249,13 +250,15 @@ def rechazar(cfg: dict, estado: dict, motivo: str, primero: bool) -> None:
 
 def entregar(cfg: dict, estado: dict, bloque: str, primero: bool, entrada: dict) -> None:
     marca_tarea = MARCA_TAREA.search(bloque)
+    marca_plan = MARCA_PLAN.search(bloque)
     objetivo = int(marca_tarea.group(1)) if marca_tarea else estado["tarea"]["id"]
+    plan_objetivo = marca_plan.group(1) if marca_plan else None
     # B12 (lead, 15-sep): una entrega es un punto de juicio y se valida contra el requisito vigente del registro, nunca contra la foto.
     try:
         vigente, cambios = brief.refrescar_trabajo(estado, entrada, cfg)
-        if marca_tarea and not vigente.get("abortado"):
-            # B13.2 (lead, 15-sep): 'Tarea: <id>' entrega esa tarea si es del agente en este plan, está abierta y no está entregada sin juicio.
-            vista, motivo = brief.tarea_de_entrega(vigente, objetivo, cfg)
+        if (marca_tarea or marca_plan) and not vigente.get("abortado"):
+            # B13.2 + B14 (lead, 15-sep): 'Plan: <id>' y 'Tarea: <id>' seleccionan qué plan y tarea entregar.
+            vista, motivo = brief.tarea_de_entrega(vigente, objetivo, cfg, plan_id_objetivo=plan_objetivo)
             if motivo:
                 rechazar(cfg, estado, f"ENTREGA rechazada: {motivo}", primero)
             vigente = vista

@@ -20,7 +20,8 @@ FORMATO_ENTREGA = (
     "LECCIÓN: <una línea útil para el siguiente agente de esta línea de la oferta>\n"
     "Una ENTREGA solo vale si la comprobación pasa: una salida con fallos (failed, error, Traceback, exit code distinto de 0) o un "
     "resultado que no cumple lo esperado tras '→' la invalida.\n"
-    "Con varias tareas abiertas, la línea 'Tarea: <id>' en el bloque ENTREGA entrega esa tarea; sin ella se entrega la tarea del brief.\n"
+    "Con varias tareas abiertas, las líneas 'Plan: <id>' y 'Tarea: <id>' en el bloque ENTREGA seleccionan qué plan y tarea entregar; "
+    "sin ellas se entrega la tarea del brief.\n"
     "Cuando la entrega no es posible, una última línea 'PREGUNTA: <qué hace falta de Carlos>' o 'BLOQUEADO: <qué impide entregar>' "
     "permite cerrar y queda registrada para Carlos como pregunta_humano. Un segundo intento de cierre sin ENTREGA válida también se "
     "permite, pero la tarea queda como bloqueo:entrega_incompleta."
@@ -48,8 +49,8 @@ def buscar_plan(cfg: dict):
                 sin_trabajo.append((d["plan"]["id"], [(t["id"], t["progreso"]) for t in propias]))
         validos = [c for c in candidatos if c[0]["plan"]["estado"] == "abierto" and str(c[0]["plan"].get("dueno") or "").startswith("H:")]
         if validos:
-            return validos[0], candidatos, sin_trabajo
-    return None, candidatos, sin_trabajo
+            return validos, candidatos, sin_trabajo
+    return [], candidatos, sin_trabajo
 
 
 def es_mia(tarea: dict, cfg: dict) -> bool:
@@ -95,19 +96,33 @@ def pendientes_de_juicio(cfg: dict, plan_id: str, ids: list[int], sabidas=(), es
     return en_cola | {int(f[0]) for f in filas}, ""
 
 
-def listado_tareas(tareas: list[dict], plan_id: str) -> str:
-    """B13.1: con más de una tarea trabajable, todas con su requisito, su progreso y si ya están entregadas."""
+def listado_tareas(tareas: list[dict], plan_id: str | None = None) -> str:
+    """B13.1 + B14: con más de una tarea trabajable, todas con su plan (si hay varios), requisito, progreso y si ya están entregadas."""
     if len(tareas) < 2:
         return ""
-    return (f"Tus tareas trabajables en {plan_id}: "
-            + " | ".join(f"tarea {t['id']} · {t['req_ref']} · {t['progreso']} · entregada: {'sí' if t.get('entregada') else 'no'}" for t in tareas)
+    planes = sorted(set(t.get("plan_id") or plan_id or "" for t in tareas))
+    def _linea(t: dict) -> str:
+        return f"tarea {t['id']} · {t['req_ref']} · {t['progreso']} · entregada: {'sí' if t.get('entregada') else 'no'}"
+    if len(planes) > 1:
+        partes = []
+        for pid in planes:
+            ptareas = [t for t in tareas if (t.get("plan_id") or plan_id) == pid]
+            partes.append(f"{pid}: " + " | ".join(_linea(t) for t in ptareas))
+        return ("Tus tareas trabajables: " + " · ".join(partes)
+                + ". Para entregar una de otro plan, añade «Plan: <id>» y «Tarea: <id>» al bloque ENTREGA.")
+    return (f"Tus tareas trabajables en {planes[0]}: " + " | ".join(_linea(t) for t in tareas)
             + ". Para entregar una que no es la de este brief, añade la línea «Tarea: <id>» al bloque ENTREGA.")
 
 
-def tarea_de_entrega(estado: dict, tarea_id: int, cfg: dict) -> tuple[dict | None, str | None]:
-    """B13.2: la tarea que nombra 'Tarea: <id>' en el bloque ENTREGA vale si es del agente en este plan, se puede trabajar y no está ya
-    entregada pendiente de juicio. Devuelve (el estado con esa tarea y su requisito, None) o (None, motivo). Lanza RegistroCaido."""
-    plan_id = estado["plan"]["id"]
+def tarea_de_entrega(estado: dict, tarea_id: int, cfg: dict, plan_id_objetivo: str | None = None) -> tuple[dict | None, str | None]:
+    """B13.2 + B14: la tarea que nombra 'Tarea: <id>' (y opcionalmente 'Plan: <id>') en el bloque ENTREGA vale si es del agente en ese
+    plan, se puede trabajar y no está ya entregada pendiente de juicio. Devuelve (el estado con esa tarea/plan y su requisito, None) o
+    (None, motivo). Lanza RegistroCaido."""
+    plan_id = plan_id_objetivo or estado["plan"]["id"]
+    if plan_id_objetivo:
+        ids_planes = [p["id"] for p in estado.get("planes_trabajables") or []] or [estado["plan"]["id"]]
+        if plan_id_objetivo not in ids_planes:
+            return None, f"el plan {plan_id_objetivo} no es un plan con tareas trabajables de IA:{cfg['carpeta']}:*"
     detalle = comun.leer_registro(cfg, "/plan/" + urllib.parse.quote(plan_id, safe=""))
     t = next((x for x in detalle.get("tareas") or [] if x.get("id") == tarea_id), None)
     if not t or not es_mia(t, cfg):
@@ -120,7 +135,11 @@ def tarea_de_entrega(estado: dict, tarea_id: int, cfg: dict) -> tuple[dict | Non
     req = next((r for r in detalle.get("requisitos") or [] if r.get("ref") == t.get("req_ref")), None)
     if not req:
         return None, f"la tarea {tarea_id} apunta al requisito {t.get('req_ref')}, que no existe en {plan_id}"
-    return {**estado, "tarea": {k: t.get(k) for k in ("id", "req_ref", "titulo", "progreso", "agente")}, "requisito": req}, None
+    nuevo = {**estado, "tarea": {k: t.get(k) for k in ("id", "req_ref", "titulo", "progreso", "agente")}, "requisito": req}
+    if plan_id != estado["plan"]["id"]:
+        p = detalle["plan"]
+        nuevo["plan"] = {k: p.get(k) for k in ("id", "que", "para", "estado", "dueno", "worktree", "cuesta", "abierto_en")}
+    return nuevo, None
 
 
 def resolver_permitidos(plan: dict, cfg: dict) -> tuple[list[str], str]:
@@ -278,11 +297,11 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
     nota_cola = envio_inicial(cfg)
     try:
         comun.salud(cfg)
-        encontrado, candidatos, sin_trabajo = buscar_plan(cfg)
+        validos, candidatos, sin_trabajo = buscar_plan(cfg)
     except comun.RegistroCaido as e:
         return abortar(estado, cfg, f"REGISTRO SYPNOSE CAÍDO: no se puede verificar el plan ({e})",
                        comun.plan_de(previo or comun.ultimo_estado(), cfg), nota_cola, tipo="registro_caido")
-    if not encontrado:
+    if not validos:
         if candidatos:
             p = candidatos[0][0]["plan"]
             motivo = (f"{p['id']} está '{p['estado']}' con dueño {p.get('dueno') or 'ninguno'}: solo se trabaja un plan abierto por un humano (H:). "
@@ -295,31 +314,50 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
                                         "y bloqueada espera a otra tarea.", plan_id, nota_cola)
         return abortar(estado, cfg, f"ningún plan {cfg.get('prefijo_planes', '')}* tiene tareas para IA:{cfg['carpeta']}:*.", cfg.get("plan_id"), nota_cola)
 
-    detalle, mias = encontrado
-    # B13.3 (lead, 15-sep): con varias tareas trabajables, una entregada y pendiente de juicio de 07 pasa detrás de las demás.
-    trabajando = [t["id"] for t in mias if t["progreso"] == "trabajando"] if len(mias) > 1 else []
-    ya_entregadas, nota_juicio = pendientes_de_juicio(cfg, detalle["plan"]["id"], trabajando, previo.get("entregadas_pendientes") or [])
-    for t in mias:
-        t["entregada"] = t["progreso"] == "trabajando" and t["id"] in ya_entregadas
-    mias.sort(key=lambda t: (t["entregada"], PRIORIDAD[t["progreso"]], t["id"]))
-    p, tarea = detalle["plan"], mias[0]
+    # B14 (lead, 15-sep): todos los planes válidos, no solo el primero. Los permitidos del cerco son la unión.
+    todas_tareas, planes_info, notas_juicio = [], [], []
+    todos_permitidos: list[str] = []
+    fuentes_permitidos: list[str] = []
+    for det, mias in validos:
+        pid = det["plan"]["id"]
+        trabajando = [t["id"] for t in mias if t["progreso"] == "trabajando"] if len(mias) > 1 else []
+        ya, nota = pendientes_de_juicio(cfg, pid, trabajando, previo.get("entregadas_pendientes") or [])
+        if nota:
+            notas_juicio.append(nota)
+        for t in mias:
+            t["entregada"] = t["progreso"] == "trabajando" and t["id"] in ya
+            t["plan_id"] = pid
+        todas_tareas.extend(mias)
+        planes_info.append(det)
+        perms, fuente = resolver_permitidos(det["plan"], cfg)
+        for px in perms:
+            if px not in todos_permitidos:
+                todos_permitidos.append(px)
+        fuentes_permitidos.append(fuente)
+    todas_tareas.sort(key=lambda t: (t["entregada"], t.get("plan_id", ""), PRIORIDAD[t["progreso"]], t["id"]))
+    nota_juicio = " · ".join(notas_juicio)
+    tarea = todas_tareas[0]
+    detalle = next(d for d in planes_info if d["plan"]["id"] == tarea["plan_id"])
+    p = detalle["plan"]
     motivo_devolucion = devolucion(detalle, tarea)
     req = next((r for r in detalle["requisitos"] if r["ref"] == tarea["req_ref"]), None)
     if not req:
         return abortar(estado, cfg, f"la tarea {tarea['id']} apunta al requisito {tarea['req_ref']}, que no existe en {p['id']}.", p["id"], nota_cola)
-    permitidos, fuente_permitidos = resolver_permitidos(p, cfg)
-    if not permitidos:
-        return abortar(estado, cfg, f"sin archivos permitidos para {p['id']} ({fuente_permitidos}): el cerco no se puede definir.", p["id"], nota_cola)
+    fuente_permitidos = " + ".join(fuentes_permitidos) if len(fuentes_permitidos) > 1 else (fuentes_permitidos[0] if fuentes_permitidos else "")
+    if not todos_permitidos:
+        return abortar(estado, cfg, f"sin archivos permitidos ({fuente_permitidos}): el cerco no se puede definir.", p["id"], nota_cola)
     m = re.search(r"(T\d{2})$", p["id"])
     estado.update(
-        abortado=False, motivo=None, linea=m.group(1) if m else None, requisito=req, permitidos=permitidos,
+        abortado=False, motivo=None, linea=m.group(1) if m else None, requisito=req, permitidos=todos_permitidos,
         permitidos_fuente=fuente_permitidos, sucios_inicio=previo.get("sucios_inicio") or sorted(cerco.cambios_git(cfg["worktree"]) or []),
         sucios_inicio_extra=previo.get("sucios_inicio_extra") or {x["ruta"]: sorted(c) for x in cfg.get("worktrees_extra") or []
                                                                    if x.get("ruta") and (c := cerco.cambios_git(x["ruta"])) is not None},
         plan={k: p.get(k) for k in ("id", "que", "para", "estado", "dueno", "worktree", "cuesta", "abierto_en")},
         tarea={k: tarea.get(k) for k in ("id", "req_ref", "titulo", "progreso", "agente")},
-        tareas_trabajables=[{"id": t["id"], "req_ref": t["req_ref"], "progreso": t["progreso"], "entregada": t["entregada"]} for t in mias],
-        entregadas_pendientes=sorted(t["id"] for t in mias if t["entregada"]),
+        tareas_trabajables=[{"id": t["id"], "plan_id": t["plan_id"], "req_ref": t["req_ref"], "progreso": t["progreso"], "entregada": t["entregada"]}
+                            for t in todas_tareas],
+        entregadas_pendientes=sorted(t["id"] for t in todas_tareas if t["entregada"]),
+        planes_trabajables=[{k: d["plan"].get(k) for k in ("id", "que", "estado", "dueno")} for d in planes_info],
     )
     cuando = comun.ahora()
     # Sin SessionStart (sesión abierta antes de instalar el caparazón) el estado lo crea otro hook, que no trae 'source'.
@@ -353,14 +391,14 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
         f"Línea de la oferta (literal): \"{p['para']}\"",
         f"Qué: {p['que']}",
         f"Tarea {tarea['id']} · requisito {req['ref']} · progreso {estado['tarea']['progreso']}",
-        listado_tareas(estado["tareas_trabajables"], p["id"]),
+        listado_tareas(estado["tareas_trabajables"]),
         f"Aviso del caparazón: {nota_juicio}" if nota_juicio else "",
         motivo_devolucion,
         f"Requisito {req['ref']} (EARS literal): {req['ears']}",
         f"Comprobación: {req['comprobacion']}",
         forma_sql(req["comprobacion"], cfg),
         f"Worktree local: {cfg['worktree']}",
-        f"Archivos permitidos ({fuente_permitidos}): {', '.join(permitidos)}",
+        f"Archivos permitidos ({fuente_permitidos}): {', '.join(todos_permitidos)}",
         *[f"Worktree extra {x['ruta']}: {', '.join(x.get('permitidos') or [])} (y git -C en él)" for x in cfg.get("worktrees_extra") or [] if x.get("ruta")],
         f"Presupuesto: {presupuesto}",
         f"Grafo del repo: {grafo(cfg['worktree'])}",
@@ -369,8 +407,9 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
         f"Cola del caparazón: {nota_cola}" if nota_cola else "",
         "Reglas de máquina: escrituras fuera del cerco se bloquean (bloqueo:cerco); cada herramienta deja evento con tokens y coste en la cola "
         "local, que llega al registro cada 60 s y al terminar el turno (si el registro no responde, se avisa y la cola se conserva); "
-        f"commits con Chat: {cfg['carpeta']}, Model: <modelo real>, Plan: {p['id']} y Tarea: {tarea['id']} en el último párrafo del mensaje, "
-        "junto a Co-Authored-By y sin línea en blanco entre ellas.",
+        f"commits con Chat: {cfg['carpeta']}, Model: <modelo real>, Plan: <plan de tu tarea> y Tarea: <id> en el último párrafo del mensaje, "
+        "junto a Co-Authored-By y sin línea en blanco entre ellas."
+        + (f" Con un solo plan, Plan: {p['id']}." if len(estado.get('planes_trabajables') or []) < 2 else ""),
         FORMATO_ENTREGA,
     ] if x)
     with comun.cerrojo():
@@ -394,16 +433,18 @@ def refrescar_trabajo(estado: dict, entrada: dict, cfg: dict, cambiar_si_entrega
         if plan.get("estado") != "abierto":
             situacion += f", plan {plan.get('estado')}"
         return construir_estado(entrada, cfg), [f"la tarea {tarea.get('id')} ya no se puede trabajar ({situacion}): el caparazón ha vuelto a leer el registro"]
-    # B13 (lead, 15-sep): con varias tareas trabajables, cada prompt consulta en el registro cuáles están entregadas y pendientes de juicio.
-    # El Stop no consulta aquí: la tarea que nombra 'Tarea: <id>' la comprueba tarea_de_entrega.
+    # B13 + B14 (lead, 15-sep): con varias tareas trabajables, cada prompt consulta en el registro cuáles están entregadas y pendientes de juicio.
+    # Las tareas del plan activo salen del registro (frescas); las de otros planes se conservan del estado.
     trabajables = [t for t in detalle.get("tareas") or [] if es_mia(t, cfg) and t.get("progreso") in PRIORIDAD]
     trabajando, sabidas = [t["id"] for t in trabajables if t["progreso"] == "trabajando"], estado.get("entregadas_pendientes") or []
     if cambiar_si_entregada and len(trabajables) > 1:
         en_juicio, nota = pendientes_de_juicio(cfg, plan_id, trabajando, sabidas, espera=15)
     else:
         en_juicio, nota = (entregas_en_cola(plan_id) | set(sabidas)) & set(trabajando), ""
-    lista = sorted(({"id": t["id"], "req_ref": t.get("req_ref"), "progreso": t["progreso"], "entregada": t["id"] in en_juicio} for t in trabajables),
-                   key=lambda t: (t["entregada"], PRIORIDAD[t["progreso"]], t["id"]))
+    lista_plan = [{"id": t["id"], "plan_id": plan_id, "req_ref": t.get("req_ref"), "progreso": t["progreso"], "entregada": t["id"] in en_juicio}
+                  for t in trabajables]
+    otros = [t for t in estado.get("tareas_trabajables") or [] if t.get("plan_id") != plan_id]
+    lista = sorted(lista_plan + otros, key=lambda t: (t["entregada"], t.get("plan_id", ""), PRIORIDAD[t["progreso"]], t["id"]))
     if cambiar_si_entregada and tarea.get("id") in en_juicio and any(not t["entregada"] for t in lista):
         # B13.3 (lead, 15-sep): la tarea del estado ya está entregada y pendiente de juicio; el prompt pasa a la siguiente trabajable.
         nuevo = construir_estado(entrada, cfg)
@@ -423,7 +464,14 @@ def refrescar_trabajo(estado: dict, entrada: dict, cfg: dict, cambiar_si_entrega
         e.update(requisito=req, tarea={**(e.get("tarea") or {}), "progreso": vigente.get("progreso")}, requisito_confirmado=comun.ahora(),
                  tareas_trabajables=lista, entregadas_pendientes=sorted(en_juicio))
         if permitidos:
-            e.update(permitidos=permitidos, permitidos_fuente=fuente)
+            if len(e.get("planes_trabajables") or []) > 1:
+                union = list(e.get("permitidos") or [])
+                for px in permitidos:
+                    if px not in union:
+                        union.append(px)
+                e.update(permitidos=union, permitidos_fuente=fuente + " (unión multi-plan)")
+            else:
+                e.update(permitidos=permitidos, permitidos_fuente=fuente)
 
     return comun.actualizar_estado(estado["session_id"], aplicar), cambios
 
