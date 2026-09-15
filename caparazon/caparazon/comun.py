@@ -494,7 +494,7 @@ def vaciar(cfg: dict, sid: str, motivo: str, esperar: float = 0.0) -> dict:
             return {"estado": "vacia", "sesion": sid}
         intento = ahora()
         st = _actualizar_estado_cola(sid, lambda s: s.update(ultimo_intento=intento))
-        fallo = st.get("fallo")
+        fallo, kb_fallo = st.get("fallo"), st.get("kb_fallo")
         claves_kb = {o["clave"] for o in ops if o["op"] == "kb_guardar"}
         registro = [o for o in ops if o["op"] != "kb_guardar" and o.get("tras_kb") not in claves_kb]
         caida = []
@@ -539,6 +539,24 @@ def vaciar(cfg: dict, sid: str, motivo: str, esperar: float = 0.0) -> dict:
             except (RegistroCaido, RegistroRechazo) as e:
                 pendientes += [o, *dependientes]
                 motivo_kb = str(e)
+        # Caída solo de la KB (decisión del lead): se anota en el estado de la cola y, cuando la KB vuelve y guarda lo retenido, se registra
+        # bloqueo:kb_caida con las operaciones retenidas y su evidencia, como bloqueo:registro_caido, para que la vista de bloqueos lo cuente.
+        kb_caida_registrada = False
+        if pendientes:
+            evento_retenido = next((d for d in pendientes if d["op"] == "evento"), {})
+            kb_fallo = {"desde": (kb_fallo or {}).get("desde") or intento, "ultimo": intento, "intentos": (kb_fallo or {}).get("intentos", 0) + 1,
+                        "motivo": str(motivo_kb)[:500], "retenidas": len(pendientes),
+                        "actor": evento_retenido.get("actor") or actor_de(cfg, None), "plan_id": evento_retenido.get("plan_id")}
+        elif kb_fallo:
+            try:
+                escribir(cfg, ops_bloqueo(kb_fallo["actor"], "kb_caida", kb_fallo.get("plan_id"),
+                                          f"KB sin respuesta desde {kb_fallo['desde']} (último fallo {kb_fallo['ultimo']}, {kb_fallo['intentos']} envíos "
+                                          f"fallidos); {kb_fallo['retenidas']} operaciones retenidas en la cola local (lecciones y su leccion_guardada) y "
+                                          f"enviadas al volver; el registro recibió el resto a su hora; último motivo: {kb_fallo['motivo']}",
+                                          cuando=kb_fallo["ultimo"]))
+                kb_fallo, kb_caida_registrada = None, True
+            except (RegistroCaido, RegistroRechazo):
+                pass
         with cerrojo():
             completo = p.read_bytes() if p.exists() else b""
             resto = completo[len(datos):]
@@ -550,10 +568,11 @@ def vaciar(cfg: dict, sid: str, motivo: str, esperar: float = 0.0) -> dict:
             else:
                 p.unlink(missing_ok=True)
             st = estado_cola(sid)
-            st.update(fallo=None, ultimo_ok=ahora())
+            st.update(fallo=None, ultimo_ok=ahora(), kb_fallo=kb_fallo)
             _escribir_json(ruta_estado_cola(sid), st)
         r = {"estado": "rechazo" if rechazados else "ok", "sesion": sid, "enviadas": len(ops) - len(pendientes), "caido_registrado": bool(fallo),
-             "rechazadas": rechazados, "fichero_rechazos": str(COLA_DIR / (nombre_seguro(sid) + ".rechazadas.jsonl"))}
+             "kb_caida_registrada": kb_caida_registrada, "rechazadas": rechazados,
+             "fichero_rechazos": str(COLA_DIR / (nombre_seguro(sid) + ".rechazadas.jsonl"))}
         if pendientes:
             r.update(kb_pendientes=sum(1 for o in pendientes if o["op"] == "kb_guardar"), motivo_kb=motivo_kb, cola=str(ruta_cola(sid)))
             if not rechazados:
