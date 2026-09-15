@@ -155,6 +155,24 @@ def main() -> None:
 
     verificar_canonicos_registrados(conn)
 
+    # Regla lead: cada línea en cubre_por_evidencia debe tener ≥1 evidencia en su plan
+    linea_a_plan = {v: k for k, v in plan_por_linea.items()}
+    sin_evidencia = []
+    for lid in sorted(cubre_set):
+        plan_id = linea_a_plan.get(lid)
+        if not plan_id:
+            sin_evidencia.append(f"{lid}: sin plan en plan_por_linea")
+            continue
+        n = conn.execute(
+            "SELECT COUNT(*) FROM evidencia WHERE plan_id=?", (plan_id,)
+        ).fetchone()[0]
+        if n == 0:
+            sin_evidencia.append(f"{lid} ({plan_id}): 0 filas en evidencia")
+    if sin_evidencia:
+        for s in sin_evidencia:
+            print(f"  [FALLO] {s}")
+        sys.exit(f"[FALLO] {len(sin_evidencia)} líneas en cubre_por_evidencia sin evidencia registrada")
+
     lineas = conn.execute(
         "SELECT id FROM nodo WHERE tipo='linea_oferta' ORDER BY id"
     ).fetchall()
@@ -197,6 +215,22 @@ def main() -> None:
                 altas.append(f"cubre {SOL_ID} → {linea_id}")
             else:
                 existian.append(f"cubre {SOL_ID} → {linea_id}")
+
+        # reconciliar: cubre observado que no esté en cubre_por_evidencia → propuesto + evento
+        cubre_en_bd = conn.execute(
+            "SELECT destino FROM relacion WHERE origen=? AND tipo='cubre' AND certeza='observado'",
+            (SOL_ID,),
+        ).fetchall()
+        for (destino,) in cubre_en_bd:
+            sufijo = destino.replace("linea:coforge:", "")
+            if sufijo not in cubre_set:
+                conn.execute(
+                    "UPDATE relacion SET certeza='propuesto' WHERE origen=? AND destino=? AND tipo='cubre'",
+                    (SOL_ID, destino),
+                )
+                evento(conn, args.actor, "cubre_reconciliado",
+                       f"cubre {SOL_ID}→{destino} → propuesto (no en cubre_por_evidencia)", nodo_id=SOL_ID)
+                altas.append(f"reconciliado cubre→{destino} → propuesto")
 
         modulos_t01 = [
             "dir:vmi3211028:rag-banking-agent:app",
