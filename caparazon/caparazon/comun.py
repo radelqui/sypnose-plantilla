@@ -256,7 +256,8 @@ def motivo_modo_prueba(cfg: dict) -> str | None:
             faltan.append(f"el marcador {MARCADOR_INSTALACION} no es de {carpeta}")
     cwd = _cwd_sesion or os.getcwd()
     cwd_n = cerco.norm(cwd, os.getcwd())
-    if not any(cerco.dentro(cwd_n, cerco.norm(b, aqui)) for b in (carpeta, worktree) if b):
+    extras = [str(x.get("ruta") or "") for x in cfg.get("worktrees_extra") or []]
+    if not any(cerco.dentro(cwd_n, cerco.norm(b, aqui)) for b in (carpeta, worktree, *extras) if b):
         faltan.append(f"la sesión trabaja en {cwd}, fuera de {carpeta or 'la carpeta del config'} y de su worktree")
     return "; ".join(faltan) or None
 
