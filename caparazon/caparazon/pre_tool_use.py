@@ -18,9 +18,10 @@ def main() -> None:
     if estado.get("abortado"):
         comun.bloquear(f"CAPARAZÓN ABORTADO: {herramienta} bloqueada.\n{estado['motivo']}")
     extra = [entrada["scratchpad_dir"]] if entrada.get("scratchpad_dir") else []
+    extras_wt = cfg.get("worktrees_extra") or []
     fallos = []
     for objetivo in cerco.objetivos_herramienta(herramienta, datos, cwd):
-        motivo = objetivo and cerco.veredicto(objetivo, cwd, estado["worktree"], estado["permitidos"], extra)
+        motivo = objetivo and cerco.veredicto(objetivo, cwd, estado["worktree"], estado["permitidos"], extra, extras_wt)
         if motivo:
             fallos.append(motivo)
     if not fallos:
@@ -28,7 +29,8 @@ def main() -> None:
     resumen = f"{herramienta} bloqueada por el cerco: " + " | ".join(fallos)
     detalle = resumen + (f" · comando: {datos.get('command', '')[:300]}" if herramienta in ("Bash", "PowerShell") else "")
     comun.encolar(estado["session_id"], comun.ops_bloqueo(estado["actor"], "cerco", estado["plan"]["id"], detalle))
-    comun.bloquear(f"CERCO: {resumen}\nSolo puedes escribir dentro de {estado['worktree']} en: {', '.join(estado['permitidos'])}.\n"
+    en_extras = "".join(f"; dentro de {x['ruta']} en: {', '.join(x.get('permitidos') or [])}" for x in extras_wt if x.get("ruta"))
+    comun.bloquear(f"CERCO: {resumen}\nSolo puedes escribir dentro de {estado['worktree']} en: {', '.join(estado['permitidos'])}{en_extras}.\n"
                    "bloqueo:cerco anotado en la cola del caparazón; llega al registro SYPNOSE en el siguiente envío (≤60 s o al terminar el turno).")
 
 

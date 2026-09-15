@@ -3,6 +3,7 @@ como trailers (`git log --format=%(trailers)`). Si llegan en párrafos finales s
 en un solo bloque reescribiendo el mensaje. Si faltan o están en otro sitio, se rechaza el commit y se anota bloqueo:commit-msg en la cola."""
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -98,7 +99,7 @@ def main() -> None:
     actor = estado.get("actor") or comun.actor_de(cfg, None)
     comun.encolar(estado.get("session_id") or "sin-sesion",
                   comun.ops_bloqueo(actor, "commit-msg", comun.plan_de(estado, cfg),
-                                    f"commit rechazado en {cfg['worktree']} ('{asunto}'): " + "; ".join(fallos)))
+                                    f"commit rechazado en {os.getcwd()} ('{asunto}'): " + "; ".join(fallos)))
     sys.stderr.write("COMMIT RECHAZADO por el caparazón:\n - " + "\n - ".join(fallos)
                      + "\nPie obligatorio en el último párrafo del mensaje, sin línea en blanco entre sus líneas:\n"
                      + f"  Chat: {cfg['carpeta']}\n  Model: <modelo real>\n  Plan: {plan_vigente or '<plan abierto>'}\n"

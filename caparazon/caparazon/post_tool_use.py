@@ -48,9 +48,10 @@ def main() -> None:
     else:
         (salida, interrumpido), exit_code = salida_de(entrada.get("tool_response")), 0
     comando = str(datos.get("command", ""))
-    actuales = None
+    actuales, actuales_extra = None, {}
     if not previo.get("abortado") and herramienta in ESCRITURAS + ("Bash", "PowerShell"):
         actuales = cerco.cambios_git(previo["worktree"])
+        actuales_extra = {x["ruta"]: cerco.cambios_git(x["ruta"]) for x in cfg.get("worktrees_extra") or [] if x.get("ruta")}
     nuevos_fuera: list[str] = []
 
     def cambio(e: dict) -> None:
@@ -77,6 +78,24 @@ def main() -> None:
                 if not cerco.rel_permitida(rel, e["permitidos"]) and rel not in e.setdefault("fuera_avisados", []):
                     e["fuera_avisados"].append(rel)
                     nuevos_fuera.append(rel)
+        # Worktrees extra (p. ej. el spec del chat en el repo plantilla): misma auditoría con sus permitidos. Una sesión anterior a este
+        # cambio no tiene su foto inicial: la toma en la primera auditoría y audita desde ahí.
+        for ruta_x, actuales_x in actuales_extra.items():
+            if actuales_x is None:
+                continue
+            inicio_x = e.setdefault("sucios_inicio_extra", {})
+            if ruta_x not in inicio_x:
+                inicio_x[ruta_x] = sorted(actuales_x)
+                continue
+            permitidos_x = next((x.get("permitidos") or [] for x in cfg["worktrees_extra"] if x.get("ruta") == ruta_x), [])
+            for rel in sorted(actuales_x - set(inicio_x[ruta_x])):
+                clave = f"{ruta_x}::{rel}"
+                if clave not in e.setdefault("cambios_vistos", []):
+                    e["cambios_vistos"].append(clave)
+                    e.setdefault("escrituras", []).append({"cuando": cuando, "herramienta": f"git:{herramienta}", "ruta": f"{ruta_x}/{rel}"})
+                if not cerco.rel_permitida(rel, permitidos_x) and clave not in e.setdefault("fuera_avisados", []):
+                    e["fuera_avisados"].append(clave)
+                    nuevos_fuera.append(f"{ruta_x}/{rel}")
         coste = comun.coste_usd(uso, e.get("modelo"))
         if coste is not None:
             e.setdefault("coste_turnos", {})[entrada.get("prompt_id") or "sin-prompt"] = round(coste, 6)
@@ -99,8 +118,9 @@ def main() -> None:
                                  f"auditoría git tras {herramienta}: cambios fuera de archivos_permitidos {nuevos_fuera}")
     comun.encolar(sid, ops)
     if nuevos_fuera:
-        comun.bloquear(f"CERCO (auditoría git): {herramienta} dejó cambios fuera de archivos_permitidos en {estado['worktree']}: "
-                       f"{', '.join(nuevos_fuera)}. Reviértelos con `git checkout -- <ruta>` o `git clean -f -- <ruta>`. "
+        comun.bloquear(f"CERCO (auditoría git): {herramienta} dejó cambios fuera de archivos_permitidos en {estado['worktree']}"
+                       f"{' o en sus worktrees extra' if actuales_extra else ''}: {', '.join(nuevos_fuera)}. "
+                       "Reviértelos con `git checkout -- <ruta>` o `git clean -f -- <ruta>` en su worktree. "
                        "bloqueo:cerco anotado en la cola del caparazón.")
     aviso = comun.aviso_cola(cfg, sid)
     if aviso:

@@ -45,8 +45,12 @@ def instalar(c, *extra):
 ok = True
 ajenos = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "ajeno.exe"}]}]}, "permissions": {"allow": ["Bash(ls *)"]}, "env": {"AJENA": "1"}}
 c1 = carpeta_nueva("con-ajenos", ajenos)
+subprocess.run(["git", "init", "-q", str(c1 / "wt-plantilla")], check=True)
+extra = f"{c1 / 'wt-plantilla'}:specs/T01/**"
+hooks_extra = lambda: subprocess.run(["git", "-C", str(c1 / "wt-plantilla"), "config", "--worktree", "--get", "core.hooksPath"],
+                                     capture_output=True, text=True).stdout.strip()
 originales = {n: (c1 / n).read_bytes() for n in ("CLAUDE.md", ".claude/settings.json")}
-instalar(c1, "--modo", "real")
+instalar(c1, "--modo", "real", "--worktree-extra", extra)
 f1 = foto(c1)
 marcador = json.loads((c1 / ".claude/caparazon/INSTALADO").read_text(encoding="utf-8"))
 s1 = json.loads((c1 / ".claude/settings.json").read_text(encoding="utf-8"))
@@ -54,7 +58,11 @@ ajeno_vivo = any(h.get("command") == "ajeno.exe" for g in s1["hooks"]["Stop"] fo
 print(f"marcador INSTALADO: {marcador}")
 print(f"settings.env: {s1.get('env')} · hook ajeno conservado: {ajeno_vivo}")
 ok &= marcador.get("carpeta_ruta") == str(c1.resolve()) and s1.get("env") == {"AJENA": "1", "SYPNOSE_MODO": "real"} and ajeno_vivo
-instalar(c1, "--modo", "real")
+cfg1 = json.loads((c1 / ".claude/caparazon/config.json").read_text(encoding="utf-8"))
+print(f"worktrees_extra: {cfg1.get('worktrees_extra')} · core.hooksPath del worktree extra: {hooks_extra()}")
+ok &= (cfg1.get("worktrees_extra") == [{"ruta": str((c1 / "wt-plantilla").resolve()), "permitidos": ["specs/T01/**"]}]
+       and hooks_extra().endswith("/.claude/caparazon/githooks"))
+instalar(c1, "--modo", "real", "--worktree-extra", extra)
 f2 = foto(c1)
 print(f"reinstalar no cambia nada ({len(f2)} ficheros, ni contenido ni fecha): {f1 == f2}")
 ok &= f1 == f2
@@ -64,6 +72,8 @@ iguales = {n: (c1 / n).read_bytes() == b for n, b in originales.items()}
 print(f"desinstalar: settings.json igual al original={s2 == ajenos} · bytes iguales={iguales} · .mcp.json existe={(c1 / '.mcp.json').exists()} · "
       f"módulos activos={(c1 / '.claude/caparazon').exists()} · en .claude queda={sorted(p.name for p in (c1 / '.claude').iterdir())}")
 ok &= s2 == ajenos and all(iguales.values()) and not (c1 / ".mcp.json").exists() and not (c1 / ".claude/caparazon").exists()
+print(f"desinstalar: core.hooksPath del worktree extra = '{hooks_extra()}'")
+ok &= hooks_extra() == ""
 c2 = carpeta_nueva("limpia")
 instalar(c2)
 s3 = json.loads((c2 / ".claude/settings.json").read_text(encoding="utf-8"))

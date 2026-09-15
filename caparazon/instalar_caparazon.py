@@ -1,6 +1,7 @@
 """B8: instala el caparazón SYPNOSE en una carpeta de chat (hooks, commit-msg, .mcp.json, settings.json, sección de CLAUDE.md).
 
-    python instalar_caparazon.py <carpeta> [--modo prueba|real] [--worktree <ruta>] [--prefijo-planes PLAN-CS-] [--plan-id PLAN-CS-T01]
+    python instalar_caparazon.py <carpeta> [--modo prueba|real] [--worktree <ruta>] [--worktree-extra "<ruta>:<patrón>[,<patrón>]"]...
+                                 [--prefijo-planes PLAN-CS-] [--plan-id PLAN-CS-T01]
     python instalar_caparazon.py <carpeta> --desinstalar
 
 Escribe el marcador INSTALADO junto a los módulos y SYPNOSE_MODO en .claude/settings.json. Las sesiones de la carpeta solo escriben en
@@ -31,6 +32,18 @@ MARCADOR = "INSTALADO"
 
 def posix(ruta: Path | str) -> str:
     return str(ruta).replace("\\", "/")
+
+
+def worktrees_extra(valores: list[str]) -> list[dict]:
+    """--worktree-extra "<ruta>:<patrón>[,<patrón>]" (repetible) → [{ruta, permitidos}], agrupado por ruta absoluta."""
+    res: dict[str, list[str]] = {}
+    for valor in valores:
+        ruta, sep, patrones = valor.rpartition(":")
+        if not sep or not Path(ruta).is_absolute() or not patrones.strip():
+            sys.exit(f"[caparazón] --worktree-extra necesita <ruta absoluta>:<patrón> (llegó '{valor}')")
+        lista = res.setdefault(str(Path(ruta).resolve()), [])
+        lista += [p.strip() for p in patrones.split(",") if p.strip() and p.strip() not in lista]
+    return [{"ruta": r, "permitidos": p} for r, p in res.items()]
 
 
 def sustituir(valor, variables: dict):
@@ -113,7 +126,7 @@ def instalar(args, carpeta: Path, wt: Path) -> None:
     config = {
         "carpeta": carpeta.name, "carpeta_ruta": str(carpeta), "worktree": str(wt),
         "coleccion": args.coleccion, "kb_proyecto": args.kb_proyecto, "prefijo_planes": args.prefijo_planes,
-        "plan_id": args.plan_id, "verificador": args.verificador,
+        "plan_id": args.plan_id, "verificador": args.verificador, "worktrees_extra": worktrees_extra(args.worktree_extra),
         "registro_url": "http://127.0.0.1:7101", "kb_url": "http://127.0.0.1:18791", "escritura": "ssh",
         "ssh": {"bin": ssh_bin, "destino": args.ssh_destino, "puerto": args.ssh_puerto, "clave": args.ssh_clave, "db": args.registro_db},
     }
@@ -186,6 +199,21 @@ def instalar(args, carpeta: Path, wt: Path) -> None:
     if git(wt, "config", "--worktree", "--get", "core.hooksPath", check=False).stdout.strip() != posix(dir_capa / "githooks"):
         git(wt, "config", "--worktree", "core.hooksPath", posix(dir_capa / "githooks"))
         print(f"  git: core.hooksPath (solo este worktree) = {posix(dir_capa / 'githooks')}")
+    for extra in config["worktrees_extra"]:
+        wx = Path(extra["ruta"])
+        cima = git(wx, "rev-parse", "--show-toplevel", check=False).stdout.strip() if wx.is_dir() else ""
+        if not cima or Path(cima).resolve() != wx.resolve():
+            print(f"  aviso: {wx} todavía no es la raíz de un worktree git; el cerco ya lo admite con {extra['permitidos']} y "
+                  "commit-msg se engancha al reinstalar cuando exista")
+            continue
+        if git(wx, "config", "--get", "extensions.worktreeConfig", check=False).stdout.strip() != "true":
+            git(wx, "config", "extensions.worktreeConfig", "true")
+            print(f"  git ({wx.name}): extensions.worktreeConfig=true")
+        if git(wx, "config", "--worktree", "--get", "core.hooksPath", check=False).stdout.strip() != posix(dir_capa / "githooks"):
+            git(wx, "config", "--worktree", "core.hooksPath", posix(dir_capa / "githooks"))
+            print(f"  git ({wx}): core.hooksPath (solo ese worktree) = {posix(dir_capa / 'githooks')}")
+        if str(wx) not in manifiesto.setdefault("hooks_extra", []):
+            manifiesto["hooks_extra"].append(str(wx))
     manifiesto.setdefault("instalado_en", sello)
     escribir_json(manifiesto_p, manifiesto)
     print(f"[caparazón] instalado en modo {args.modo}. Abre el chat en la carpeta: SessionStart imprimirá el brief."
@@ -248,6 +276,9 @@ def desinstalar(carpeta: Path, wt: Path) -> None:
         print("  CLAUDE.md sin sección caparazón")
     git(wt, "config", "--worktree", "--unset", "core.hooksPath", check=False)
     print("  git: core.hooksPath del worktree retirado")
+    for ruta_extra in manifiesto.get("hooks_extra", []):
+        git(Path(ruta_extra), "config", "--worktree", "--unset", "core.hooksPath", check=False)
+        print(f"  git ({ruta_extra}): core.hooksPath retirado")
     (dir_capa / MARCADOR).unlink(missing_ok=True)
     print(f"  {MARCADOR} retirado: los módulos que se conservan ya no escriben en vivo")
     destino = dir_claude / f"caparazon-desinstalado-{datetime.now():%Y%m%d-%H%M%S}"
@@ -262,6 +293,8 @@ def main() -> None:
     ap.add_argument("--desinstalar", action="store_true")
     ap.add_argument("--modo", choices=("prueba", "real"), default="prueba",
                     help="real: las sesiones de la carpeta escriben en vivo en el registro y la KB (SYPNOSE_MODO=real)")
+    ap.add_argument("--worktree-extra", action="append", default=[], metavar="RUTA:PATRONES",
+                    help="worktree adicional donde el chat puede escribir (p. ej. su spec en el repo plantilla): <ruta>:<patrón>[,<patrón>]; repetible")
     ap.add_argument("--prefijo-planes", default="PLAN-CS-")
     ap.add_argument("--plan-id", default=None)
     ap.add_argument("--coleccion", default="coforge-santander")
