@@ -407,10 +407,10 @@ def calcular_certeza(conn, plan_id: str) -> tuple[str, list[str]]:
     invalidas_fuente = set()
     invalidas_rowid = set()
     for row in conn.execute(
-        "SELECT fuente FROM evidencia WHERE plan_id=? AND fuente LIKE 'INVALIDA:%'",
+        "SELECT rowid, fuente FROM evidencia WHERE plan_id=? AND fuente LIKE 'INVALIDA:%'",
         (plan_id,),
     ).fetchall():
-        inv_fuente = row[0]
+        inv_rid, inv_fuente = row
         target = inv_fuente.replace("INVALIDA:", "", 1)
         autorizado = conn.execute(
             "SELECT actor FROM evento "
@@ -430,8 +430,10 @@ def calcular_certeza(conn, plan_id: str) -> tuple[str, list[str]]:
                 tiene_autorizacion = True
                 break
         if not tiene_autorizacion:
-            print(f"  [WARN] {inv_fuente} ignorada: sin evento evidencia_invalidada autorizado")
-            continue
+            sys.exit(
+                f"[ERROR DATOS] {plan_id}: evidencia rowid={inv_rid} fuente={inv_fuente} "
+                "sin evento evidencia_invalidada autorizado — aborto (marcador no autorizado)"
+            )
         m_rowid = re.match(r"^rowid:(\d+)$", target)
         if m_rowid:
             invalidas_rowid.add(int(m_rowid.group(1)))
