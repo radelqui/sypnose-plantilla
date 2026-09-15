@@ -247,7 +247,8 @@ def construir_estado(entrada: dict, cfg: dict) -> dict:
         f"Cola del caparazón: {nota_cola}" if nota_cola else "",
         "Reglas de máquina: escrituras fuera del cerco se bloquean (bloqueo:cerco); cada herramienta deja evento con tokens y coste en la cola "
         "local, que llega al registro cada 60 s y al terminar el turno (si el registro no responde, se avisa y la cola se conserva); "
-        f"commits con pie Chat: {cfg['carpeta']} / Model: / Plan: {p['id']} / Tarea: {tarea['id']}.",
+        f"commits con Chat: {cfg['carpeta']}, Model: <modelo real>, Plan: {p['id']} y Tarea: {tarea['id']} en el último párrafo del mensaje, "
+        "junto a Co-Authored-By y sin línea en blanco entre ellas.",
         FORMATO_ENTREGA,
     ] if x)
     with comun.cerrojo():
