@@ -15,6 +15,9 @@
         {"type": "command", "command": "{{PYTHON}}", "args": ["{{CAPARAZON}}/flush.py", "--si-toca", "60"], "async": true}
       ]}
     ],
+    "PostToolUseFailure": [
+      {"matcher": "Bash|PowerShell", "hooks": [{"type": "command", "command": "{{PYTHON}}", "args": ["{{CAPARAZON}}/post_tool_use.py"], "timeout": 60}]}
+    ],
     "Stop": [
       {"hooks": [{"type": "command", "command": "{{PYTHON}}", "args": ["{{CAPARAZON}}/stop.py"], "timeout": 90}]}
     ],
