@@ -39,8 +39,13 @@ no puede permitirse (ver hallazgo B1 de 07-verificador sobre el commit
 **Comprobación ejecutable** (verificada ahora mismo, evidencia abajo):
 
 ```bash
-pytest tests/test_main.py tests/test_engine_mode.py -q
+pytest tests/test_main.py tests/test_engine_mode.py
 ```
+
+(Sin `-q`: con `addopts = -q` ya en `pytest.ini`, añadir otro `-q` sube a `-qq` y
+pytest deja de imprimir la línea `N passed` — la evidencia de la entrega se
+quedaba solo con los puntos. Corrección pedida por el Lead tras revisar una
+ENTREGA real.)
 
 Casos concretos que hacen cumplir el EARS (no solo "verde genérico"):
 
@@ -55,12 +60,13 @@ Casos concretos que hacen cumplir el EARS (no solo "verde genérico"):
 - `tests/test_main.py::test_create_app_with_fake_engine` — `USE_FAKE_ENGINE=1`
   arranca sin BD ni LLM.
 
-**Evidencia (02-backend-api, worktree `chat/02-backend-api`, 2026-09-15):**
+**Evidencia (02-backend-api, worktree `chat/02-backend-api`, 2026-09-15, comprobación
+literal sin `-q`):**
 
 ```
-$ pytest tests/test_main.py tests/test_engine_mode.py -v
-...
-15 passed in 0.12s
+$ pytest tests/test_main.py tests/test_engine_mode.py
+...............                                                          [100%]
+15 passed in 1.20s
 ```
 
 ## R2 — no necesario (evitar solapamiento)
