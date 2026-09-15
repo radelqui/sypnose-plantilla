@@ -18,7 +18,7 @@ from pathlib import Path
 
 import yaml
 
-from barrera import PLANTILLA_DIR, verificar_canonicos_registrados, verificar_repo_limpio
+from barrera import PLANTILLA_DIR, actor07_valido, verificar_canonicos_registrados, verificar_repo_limpio
 
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-4-6"
 FUENTE = "plantilla/enlazar_solucion.py"
@@ -207,20 +207,12 @@ def validar_fuente(fuente: str, conn=None, plan_id: str | None = None) -> tuple[
             return True, "ok"
         return False, f"plan {plan_id} not found in DB"
 
-    # 07-verificador/* → valid only if evento has matching row from a registered 07 actor
+    # 07-verificador/* → valid only if evento has matching row from a ratified 07 actor
     if RE_VERIFICADOR.match(fuente):
         if ".." in fuente:
             return False, "path traversal rejected"
         if not conn or not plan_id:
             return False, "needs DB connection and plan_id"
-        valid_07 = {
-            r[0]
-            for r in conn.execute(
-                "SELECT id FROM actor WHERE id LIKE 'IA:07-verificador:%' AND clase='ia'"
-            ).fetchall()
-        }
-        if not valid_07:
-            return False, "no registered 07-verificador actors in actor table"
         rows = conn.execute(
             "SELECT actor FROM evento WHERE accion='evidencia_07' AND plan_id=? AND detalle=?",
             (plan_id, fuente),
@@ -228,17 +220,17 @@ def validar_fuente(fuente: str, conn=None, plan_id: str | None = None) -> tuple[
         found_valid = False
         unknown_actors = []
         for (actor,) in rows:
-            if actor in valid_07:
+            if actor.startswith("IA:07-verificador:") and actor07_valido(actor, conn):
                 found_valid = True
             elif "07-verificador" in actor:
                 unknown_actors.append(actor)
         if found_valid:
             for ua in unknown_actors:
-                print(f"  [WARN] unknown 07-verificador actor in events: {ua}")
+                print(f"  [WARN] unratified 07-verificador actor in events: {ua}")
             return True, "ok"
         if unknown_actors:
-            return False, f"unknown 07-verificador actor(s): {', '.join(unknown_actors)}"
-        return False, "no evidencia_07 event from actor 07"
+            return False, f"unratified 07-verificador actor(s): {', '.join(unknown_actors)}"
+        return False, "no evidencia_07 event from a ratified actor 07"
 
     # git:<repo> → repo directory must exist and be a git repo
     m = RE_GIT_REPO.match(fuente)

@@ -122,5 +122,32 @@ def verificar_canonicos_registrados(conn) -> None:
         sys.exit(f"[FALLO] plantilla HEAD ({pc[:12]}) ≠ registrado ({reg_pc[0][:12]}). sync --registrar-hash.")
 
 
+def actor07_valido(actor_id: str, conn, _seen: set | None = None) -> bool:
+    """An IA:07-verificador:* actor is valid only if ratified by a human or by a valid 07 actor.
+
+    Checks actor_ratificado events (nodo_id = target) and alta_actor events
+    (detalle starts with target id). The signer (evento.actor) must be H:*
+    or a recursively valid IA:07-verificador:* actor.
+    """
+    if _seen is None:
+        _seen = set()
+    if actor_id in _seen:
+        return False
+    _seen.add(actor_id)
+    rows = conn.execute(
+        "SELECT actor FROM evento "
+        "WHERE accion IN ('actor_ratificado','alta_actor') "
+        "AND (nodo_id = ? OR detalle LIKE ? || '%') "
+        "AND actor != ?",
+        (actor_id, actor_id, actor_id),
+    ).fetchall()
+    for (signer,) in rows:
+        if signer.startswith("H:"):
+            return True
+        if signer.startswith("IA:07-verificador:") and actor07_valido(signer, conn, _seen):
+            return True
+    return False
+
+
 def verificar_oferta_canonica(conn, h: str) -> None:
     verificar_canonicos_registrados(conn)
