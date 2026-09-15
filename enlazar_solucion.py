@@ -154,8 +154,10 @@ RE_FILE_SHA = re.compile(r"^(.+)@([0-9a-f]{6,40})$")
 RE_SECTION = re.compile(r"^(.+)#(.+)@([0-9a-f]{6,40})$")
 RE_GH_RUN = re.compile(r"^gh:run:(\d+)$")
 RE_VERIFICADOR = re.compile(r"^07-verificador/(.+)#(.+)$")
+RE_VERIFICADOR_BARE = re.compile(r"^07-verificador/([^#]+)$")
 RE_COMPROBACION = re.compile(r"^comprobacion:.+@([0-9a-f]{6,40})$")
 RE_PLAN_REF = re.compile(r"^plan:(.+)$")
+RE_GIT_REPO = re.compile(r"^git:(.+)$")
 GH_REPO = "radelqui/rag-banking-agent"
 PROYECTO_DIR = PLANTILLA_DIR.parent
 
@@ -227,6 +229,23 @@ def validar_fuente(fuente: str, conn=None) -> tuple[bool, str]:
         if _file_heading_exists(filepath, section):
             return True, "ok"
         return False, f"heading #{section} not found in {filepath.name}"
+
+    # 07-verificador/FILE (bare, no #section) → file must exist
+    m = RE_VERIFICADOR_BARE.match(fuente)
+    if m:
+        filepath = PROYECTO_DIR / "07-verificador" / m.group(1)
+        if filepath.exists():
+            return True, "ok"
+        return False, f"file {filepath.name} not found"
+
+    # git:<repo> → repo directory must exist and be a git repo
+    m = RE_GIT_REPO.match(fuente)
+    if m:
+        repo_name = m.group(1)
+        repo_path = PROYECTO_DIR / repo_name
+        if repo_path.exists() and (repo_path / ".git").exists():
+            return True, "ok"
+        return False, f"repo {repo_name} not found at {repo_path}"
 
     # comprobacion:agent/wt@sha → commit must exist
     m = RE_COMPROBACION.match(fuente)
