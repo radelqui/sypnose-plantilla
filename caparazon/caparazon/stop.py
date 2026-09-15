@@ -24,21 +24,36 @@ def huella(texto: str) -> str:
     return hashlib.sha256(compacto(texto).encode("utf-8")).hexdigest()[:16]
 
 
+FLECHA = re.compile(r"\s*(→|->)\s*")
+
+
+def ejecutable(comprobacion: str) -> str:
+    """'SELECT … → ≥1' se ejecuta como 'SELECT …': lo que va tras la flecha es el resultado esperado."""
+    return FLECHA.split(comprobacion, maxsplit=1)[0].strip() or comprobacion
+
+
+def suelto(texto: str) -> str:
+    """Sin espacios, comillas ni barras: la shell puede llevar el texto de la comprobación con otro entrecomillado."""
+    return re.sub(r"[\s'\"`\\]", "", texto)
+
+
 def validar(bloque: str, estado: dict):
     fallos = []
     comprobacion = estado["requisito"]["comprobacion"]
-    if compacto(comprobacion) not in compacto(bloque):
+    orden = suelto(ejecutable(comprobacion))
+    if orden not in suelto(bloque):
         fallos.append(f"el bloque ENTREGA no cita la comprobación literal `{comprobacion}`")
-    ejecuciones = [c for c in estado.get("comandos", []) if compacto(comprobacion) in compacto(c["comando"])]
+    ejecuciones = [c for c in estado.get("comandos", []) if orden in suelto(c["comando"])]
     linea_salida = None
     if not ejecuciones:
-        fallos.append(f"la comprobación `{comprobacion}` no se ha ejecutado en esta sesión con Bash/PowerShell")
+        fallos.append(f"la comprobación `{ejecutable(comprobacion)}` no se ha ejecutado en esta sesión con Bash/PowerShell")
     else:
         ultima = ejecuciones[-1]
         if ultima.get("interrumpido"):
             fallos.append("la última ejecución de la comprobación se interrumpió")
-        lineas = [l.strip() for l in ultima["salida"].splitlines() if len(l.strip()) >= 10][-15:]
-        linea_salida = next((l for l in reversed(lineas) if l in bloque), None)
+        lineas_bloque = {re.sub(r"^(salida|output)\s*:\s*", "", x.strip(), flags=re.I) for x in bloque.splitlines()}
+        candidatas = [l.strip() for l in ultima["salida"].splitlines() if l.strip()][-15:]
+        linea_salida = next((l for l in reversed(candidatas) if (l in bloque if len(l) >= 10 else l in lineas_bloque)), None)
         if not linea_salida:
             fallos.append("la salida pegada no es la salida real: ninguna de las últimas líneas de la última ejecución aparece literal en el bloque")
     leccion = MARCA_LECCION.search(bloque)
