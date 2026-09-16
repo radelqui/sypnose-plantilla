@@ -3,7 +3,8 @@
     python3 entregar_spec_m2.py --db ~/sypnose-f1/registry.db
 
 La spec ya está escrita y commiteada (specs/M2/spec.md, commit e33aef9).
-Este script formaliza la entrega: pendiente → trabajando → espera_firma.
+Este script formaliza la entrega: pendiente → trabajando + evento tarea_entregada.
+07 verificará y pondrá verificada_por + espera_firma (trigger D7 lo requiere).
 """
 from __future__ import annotations
 
@@ -56,9 +57,10 @@ def main() -> None:
     if progreso not in ("pendiente", "trabajando"):
         sys.exit(f"[FALLO] tarea {tid} progreso={progreso}, esperaba pendiente o trabajando")
 
-    print(f"[tarea] {tid}: {req_ref} {progreso} → espera_firma")
+    print(f"[tarea] {tid}: {req_ref} {progreso} → trabajando + entregada")
     print(f"[agente] {agente}")
     print(f"[spec] plantilla/specs/M2/spec.md (commit e33aef9)")
+    print(f"[nota] espera_firma la pone 07 al verificar (trigger D7)")
 
     if args.dry_run:
         print("[dry-run] sin cambios")
@@ -83,9 +85,6 @@ def main() -> None:
 
         ts2 = ahora()
         conn.execute(
-            "UPDATE tarea SET progreso='espera_firma' WHERE id=?", (TAREA_ID,),
-        )
-        conn.execute(
             "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
             (ts2, ACTOR, "tarea_entregada", PLAN_ID,
              f"tarea {TAREA_ID} R0: spec EARS en plantilla/specs/M2/spec.md "
@@ -99,7 +98,7 @@ def main() -> None:
     finally:
         conn.close()
 
-    print(f"[OK] tarea {TAREA_ID} → espera_firma")
+    print(f"[OK] tarea {TAREA_ID} → trabajando + tarea_entregada (07 verificará)")
 
 
 if __name__ == "__main__":
