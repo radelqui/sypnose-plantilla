@@ -145,16 +145,19 @@ def main() -> None:
         except sqlite3.IntegrityError as e:
             test(f"trigger acepta verificada_por={label} (agente no es 07)", False, str(e))
 
-    for humano, label in [
-        ("H:carlos", "H:carlos"),
-        ("H:lead", "H:lead"),
-    ]:
-        conn.execute("UPDATE tarea SET verificada_por=NULL WHERE id=?", (tid,))
-        try:
-            conn.execute("UPDATE tarea SET verificada_por=? WHERE id=?", (humano, tid))
-            test(f"trigger acepta verificada_por={label}", True)
-        except sqlite3.IntegrityError as e:
-            test(f"trigger acepta verificada_por={label}", False, str(e))
+    conn.execute("UPDATE tarea SET verificada_por=NULL WHERE id=?", (tid,))
+    try:
+        conn.execute("UPDATE tarea SET verificada_por=? WHERE id=?", ("H:carlos", tid))
+        test("trigger acepta verificada_por=H:carlos (registrado)", True)
+    except sqlite3.IntegrityError as e:
+        test("trigger acepta verificada_por=H:carlos (registrado)", False, str(e))
+
+    conn.execute("UPDATE tarea SET verificada_por=NULL WHERE id=?", (tid,))
+    try:
+        conn.execute("UPDATE tarea SET verificada_por=? WHERE id=?", ("H:inexistente", tid))
+        test("FK rechaza H:inexistente (no registrado)", False, "no rechazó")
+    except sqlite3.IntegrityError:
+        test("FK rechaza H:inexistente (no registrado)", True)
 
     conn.execute("UPDATE tarea SET verificada_por=NULL WHERE id=?", (tid,))
     try:

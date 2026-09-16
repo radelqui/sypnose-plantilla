@@ -66,8 +66,8 @@ Script de prueba: `plantilla/compuerta_d7b.py --db ~/sypnose-f1/registry.db`
 | 4 | trigger rechaza verificada_por=04-agentes | rechazar |
 | 5 | trigger acepta verificada_por=07 opus-4-6 (agente no-07) | aceptar |
 | 6 | trigger acepta verificada_por=07 opus-5 (agente no-07) | aceptar |
-| 7 | trigger acepta verificada_por=H:carlos | aceptar |
-| 8 | trigger acepta verificada_por=H:lead | aceptar |
+| 7 | trigger acepta verificada_por=H:carlos (registrado) | aceptar |
+| 8 | FK rechaza H:inexistente (no registrado) | rechazar |
 | 9 | trigger acepta verificada_por=NULL | aceptar |
 | 10 | **trigger rechaza agente-07 + verificada_por-07 (mismo modelo)** | rechazar |
 | 11 | **trigger rechaza agente-07 + verificada_por-07 (modelo diferente)** | rechazar |
