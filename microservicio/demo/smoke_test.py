@@ -62,7 +62,7 @@ def main() -> None:
     check("GET /health/ready", st == 200 or st == 503, f"status={st}")
 
     st, body = _http("POST", f"{BASE_RAG}/api/v1/consultar",
-                      body={"question": "Cual es la tasa del PROD-TEST-001?"},
+                      body={"pregunta": "Cual es la tasa del PROD-TEST-001?"},
                       headers={"X-Customer-Id": "SMOKE01"})
     check("POST /api/v1/consultar", st == 200, f"status={st}")
 
@@ -75,7 +75,7 @@ def main() -> None:
     check("GET /health/live", st == 200, f"status={st}")
 
     st, body = _http("POST", f"{BASE_CEH}/api/v1/como-estoy-hecho",
-                      body={"question": "Que ficheros tiene este servicio?"},
+                      body={"pregunta": "Que ficheros tiene este servicio?"},
                       headers={"X-Customer-Id": "SMOKE01"})
     check("POST /api/v1/como-estoy-hecho", st == 200, f"status={st}")
 
