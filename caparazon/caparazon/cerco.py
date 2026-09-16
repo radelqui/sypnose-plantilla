@@ -277,11 +277,17 @@ def _segmento(seg: list[str], cwd: str, profundidad: int) -> tuple[list[str], st
     while i < len(seg):
         t = seg[i]
         if t in REDIRECCIONES or (t.endswith(">") and set(t) <= set("0123456789&>|")):
+            # B21: un dígito solo antes de > o >> es un descriptor de fichero (2>, 1>>), no una ruta
+            if limpio and re.fullmatch(r"\d", limpio[-1]):
+                limpio.pop()
             if i + 1 < len(seg):
                 objetivos.append(seg[i + 1])
             i += 2
             continue
         if t in (">&", "<", "<<", "<<<"):
+            # B21: un dígito solo antes de >& es un descriptor (2>&1), no una ruta
+            if limpio and re.fullmatch(r"\d", limpio[-1]):
+                limpio.pop()
             i += 2
             continue
         if limpio and re.fullmatch(r"\d", limpio[-1]) and t.startswith(">"):

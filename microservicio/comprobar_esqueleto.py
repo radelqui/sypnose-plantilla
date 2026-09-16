@@ -23,7 +23,7 @@ DOMINIO = "demo_x"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 INSTANCIAR = SCRIPT_DIR / "instanciar_microservicio.py"
-DESTINO = Path.cwd().resolve() / ".tmp" / NOMBRE
+DESTINO = SCRIPT_DIR / ".tmp" / NOMBRE
 
 
 def fallo(msg: str) -> None:
