@@ -115,15 +115,21 @@ def listado_tareas(tareas: list[dict], plan_id: str | None = None) -> str:
 
 
 def tarea_de_entrega(estado: dict, tarea_id: int, cfg: dict, plan_id_objetivo: str | None = None) -> tuple[dict | None, str | None]:
-    """B13.2 + B14: la tarea que nombra 'Tarea: <id>' (y opcionalmente 'Plan: <id>') en el bloque ENTREGA vale si es del agente en ese
-    plan, se puede trabajar y no está ya entregada pendiente de juicio. Devuelve (el estado con esa tarea/plan y su requisito, None) o
+    """B13.2 + B14 + B19: la tarea que nombra 'Tarea: <id>' (y opcionalmente 'Plan: <id>') en el bloque ENTREGA vale si es del agente en
+    ese plan, se puede trabajar y no está ya entregada pendiente de juicio. Devuelve (el estado con esa tarea/plan y su requisito, None) o
     (None, motivo). Lanza RegistroCaido."""
     plan_id = plan_id_objetivo or estado["plan"]["id"]
+    detalle = comun.leer_registro(cfg, "/plan/" + urllib.parse.quote(plan_id, safe=""))
     if plan_id_objetivo:
         ids_planes = [p["id"] for p in estado.get("planes_trabajables") or []] or [estado["plan"]["id"]]
         if plan_id_objetivo not in ids_planes:
-            return None, f"el plan {plan_id_objetivo} no es un plan con tareas trabajables de IA:{cfg['carpeta']}:*"
-    detalle = comun.leer_registro(cfg, "/plan/" + urllib.parse.quote(plan_id, safe=""))
+            pl = detalle.get("plan") or {}
+            if pl.get("estado") != "abierto" or not str(pl.get("dueno") or "").startswith("H:"):
+                return None, f"el plan {plan_id_objetivo} no es un plan abierto con dueño H: ({pl.get('estado')}, {pl.get('dueno')})"
+            prefijo = f"IA:{cfg['carpeta']}:"
+            if not any(str(t.get("agente") or "").startswith(prefijo) and t.get("progreso") in PRIORIDAD
+                       for t in detalle.get("tareas") or []):
+                return None, f"el plan {plan_id_objetivo} no tiene tareas trabajables de {prefijo}*"
     t = next((x for x in detalle.get("tareas") or [] if x.get("id") == tarea_id), None)
     if not t or not es_mia(t, cfg):
         return None, f"la tarea {tarea_id} no es una tarea de IA:{cfg['carpeta']}:* en {plan_id}"
@@ -446,6 +452,30 @@ def refrescar_trabajo(estado: dict, entrada: dict, cfg: dict, cambiar_si_entrega
                   for t in trabajables]
     otros = [t for t in estado.get("tareas_trabajables") or [] if t.get("plan_id") != plan_id]
     lista = sorted(lista_plan + otros, key=lambda t: (t["entregada"], t.get("plan_id", ""), PRIORIDAD[t["progreso"]], t["id"]))
+    # B19: descubrir planes nuevos abiertos después del SessionStart
+    planes_conocidos = {(t.get("plan_id") or plan_id) for t in lista}
+    planes_nuevos: list[dict] = []
+    nuevos_perms: list[str] = []
+    with contextlib.suppress(comun.RegistroCaido):
+        prefijo = f"IA:{cfg['carpeta']}:"
+        fijado = cfg.get("plan_id")
+        for p_item in comun.leer_registro(cfg, "/planes?limite=500")["planes"]:
+            if (p_item["id"] not in planes_conocidos and p_item.get("tareas") and p_item["estado"] == "abierto"
+                    and str(p_item.get("dueno") or "").startswith("H:")
+                    and (p_item["id"] == fijado if fijado else p_item["id"].startswith(cfg.get("prefijo_planes", "")))):
+                with contextlib.suppress(comun.RegistroCaido):
+                    det_n = comun.leer_registro(cfg, "/plan/" + urllib.parse.quote(p_item["id"], safe=""))
+                    mias_n = [t for t in det_n.get("tareas") or [] if str(t.get("agente") or "").startswith(prefijo)
+                              and t.get("progreso") in PRIORIDAD]
+                    if mias_n:
+                        for t in mias_n:
+                            lista.append({"id": t["id"], "plan_id": p_item["id"], "req_ref": t.get("req_ref"),
+                                          "progreso": t["progreso"], "entregada": False})
+                        planes_nuevos.append({k: det_n["plan"].get(k) for k in ("id", "que", "estado", "dueno")})
+                        perm_n, _ = resolver_permitidos(det_n["plan"], cfg)
+                        nuevos_perms.extend(px for px in perm_n if px not in nuevos_perms)
+    if planes_nuevos:
+        lista.sort(key=lambda t: (t["entregada"], t.get("plan_id", ""), PRIORIDAD[t["progreso"]], t["id"]))
     if cambiar_si_entregada and tarea.get("id") in en_juicio and any(not t["entregada"] for t in lista):
         # B13.3 (lead, 15-sep): la tarea del estado ya está entregada y pendiente de juicio; el prompt pasa a la siguiente trabajable.
         nuevo = construir_estado(entrada, cfg)
@@ -460,19 +490,26 @@ def refrescar_trabajo(estado: dict, entrada: dict, cfg: dict, cambiar_si_entrega
     permitidos, fuente = resolver_permitidos(plan, cfg)
     if permitidos and permitidos != estado.get("permitidos"):
         cambios.append(f"los archivos permitidos cambiaron en el registro: {', '.join(permitidos)}")
+    if planes_nuevos:
+        cambios.append(f"planes nuevos descubiertos: {', '.join(p['id'] for p in planes_nuevos)}")
 
     def aplicar(e: dict) -> None:
         e.update(requisito=req, tarea={**(e.get("tarea") or {}), "progreso": vigente.get("progreso")}, requisito_confirmado=comun.ahora(),
                  tareas_trabajables=lista, entregadas_pendientes=sorted(en_juicio))
-        if permitidos:
-            if len(e.get("planes_trabajables") or []) > 1:
-                union = list(e.get("permitidos") or [])
-                for px in permitidos:
-                    if px not in union:
-                        union.append(px)
-                e.update(permitidos=union, permitidos_fuente=fuente + " (unión multi-plan)")
-            else:
-                e.update(permitidos=permitidos, permitidos_fuente=fuente)
+        if planes_nuevos:
+            e["planes_trabajables"] = list(e.get("planes_trabajables") or []) + planes_nuevos
+        multi = len(e.get("planes_trabajables") or []) > 1
+        if multi or nuevos_perms:
+            union = list(e.get("permitidos") or [])
+            for px in (permitidos or []):
+                if px not in union:
+                    union.append(px)
+            for px in nuevos_perms:
+                if px not in union:
+                    union.append(px)
+            e.update(permitidos=union, permitidos_fuente=fuente + " (unión multi-plan)")
+        elif permitidos:
+            e.update(permitidos=permitidos, permitidos_fuente=fuente)
 
     return comun.actualizar_estado(estado["session_id"], aplicar), cambios
 
