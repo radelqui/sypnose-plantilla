@@ -769,6 +769,16 @@ def main() -> None:
                                              "tool_response": {"stdout": "", "stderr": "", "interrupted": False, "isImage": False}}, env,
              lambda rc, o, e: rc == 2 and "auditoría git" in e and "EXTRA.md" in e and "MERGE.md" not in e)
 
+        # B21 (lead, 16-sep): el tokenizador tomaba el "2" de 2>&1 como ruta (evento 23641); las redirecciones de descriptor no son rutas.
+        caso("B21.0 PreToolUse: Bash touch con 2>&1 dentro del worktree → pasa (el 2 es descriptor, no ruta)",
+             dir_capa, "pre_tool_use.py",
+             {**pre, "tool_name": "Bash", "tool_input": {"command": "touch app/main.py 2>&1"}}, env,
+             (lambda rc, o, e: rc == 0) if abierto else abortado)
+        caso("B21.1 PreToolUse: Bash touch fuera del worktree con 2>&1 → bloqueada por el fichero, no por el 2",
+             dir_capa, "pre_tool_use.py",
+             {**pre, "tool_name": "Bash", "tool_input": {"command": "touch ../_centinela_fuera.txt 2>&1"}}, env,
+             (lambda rc, o, e: rc == 2 and en_mensaje(centinela) in e and "2 está fuera" not in e) if abierto else abortado)
+
         # B10 (lead, 15-sep): sin tarea abierta el humano puede hablar con su chat y el chat puede leer; solo se bloquea escribir y cambiar
         # cosas. El prompt solo se bloquea con el registro caído. La tarea 33 pasa a espera_firma mientras duran estos casos.
         with sqlite3.connect(db) as c:
