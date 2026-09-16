@@ -702,6 +702,28 @@ def main() -> None:
         if cubre_arch_count:
             print(f"  [archivos_por_linea] {cubre_arch_count} relaciones cubre módulo→línea creadas")
 
+        # sol → fichero (contiene): cada fichero de archivos_por_linea pertenece a la solución
+        contiene_sol_count = 0
+        for lid, rutas in archivos_por_linea.items():
+            for ruta in rutas:
+                nid = nodo_id_para_ruta(ruta)
+                if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (nid,)).fetchone():
+                    continue
+                rc = conn.execute(
+                    "INSERT OR IGNORE INTO relacion (origen, destino, tipo, certeza, fuente, visto_en) "
+                    "VALUES (?, ?, 'contiene', 'observado', ?, ?)",
+                    (SOL_ID, nid, FUENTE, ahora()),
+                ).rowcount
+                if rc == 1:
+                    altas.append(f"contiene {SOL_ID} → {nid}")
+                    contiene_sol_count += 1
+                else:
+                    existian.append(f"contiene {SOL_ID} → {nid}")
+        if contiene_sol_count:
+            evento(conn, args.actor, "sol_contiene_ficheros",
+                   f"{contiene_sol_count} relaciones contiene sol→fichero creadas", nodo_id=SOL_ID)
+            print(f"  [sol→fichero] {contiene_sol_count} relaciones contiene creadas")
+
         # T01 API nodes (pre-existing from graphify, not file-based)
         api_nodos_t01 = [
             "api:vmi3211028:rag-banking-agent:POST:/consultar",
