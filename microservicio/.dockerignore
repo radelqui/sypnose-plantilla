@@ -1,0 +1,15 @@
+# origen: rag-banking-agent@fce331beb35e93b080ed8998f5bf04f7bed0be30
+.git
+.github
+.env
+.venv
+__pycache__
+*.pyc
+tests
+docs
+ci
+k8s
+scripts
+.pytest_cache
+.ruff_cache
+.coverage
