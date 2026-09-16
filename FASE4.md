@@ -2,13 +2,14 @@
 
 # FASE 4 — EL CAPARAZÓN (TRASPASO-4 §2, B1–B9)
 
-**Estado (16-sep-2026):** B1–B17 + túnel aviso + descubrimiento de planes construidos con las decisiones del lead (cola local, grafo del repo, propuesta de canal,
-Stop en continuación, ENTREGA solo con comprobación en verde, pie de commit en el último párrafo, comprobación ejecutada tal cual y
-contra la base del registro, barrera de escritura en vivo, multi-plan, bloqueo SSH-git, casefold Windows, aviso reintentable,
-aviso y bloqueo por túnel caído, descubrimiento de planes nuevos en cada prompt).
-- **152/152 pruebas de bloqueo CUMPLE** en modo local (dc94097). Incluyen los 19 casos de los scripts de 07 (`x3_trailers.py`,
-  `x3_entrega2.py`, `x3_entrega3.py`), los controles de `~` de `x3_entrega4_controles.py`, 6 casos B14 (B6.28–B6.29d) y 7 casos
-  B15 (B6.30–B6.31d). `probar_instalador.py` también CUMPLE.
+**Estado (16-sep-2026):** B1–B17 + túnel aviso + descubrimiento de planes + auditoría merge construidos con las decisiones del lead
+(cola local, grafo del repo, propuesta de canal, Stop en continuación, ENTREGA solo con comprobación en verde, pie de commit en el
+último párrafo, comprobación ejecutada tal cual y contra la base del registro, barrera de escritura en vivo, multi-plan, bloqueo SSH-git,
+casefold Windows, aviso reintentable, aviso y bloqueo por túnel caído, descubrimiento de planes nuevos en cada prompt, auditoría git
+que distingue merge-brought de escrituras propias).
+- **159/159 pruebas de bloqueo CUMPLE** en modo local (0e43d77). Incluyen los 19 casos de los scripts de 07 (`x3_trailers.py`,
+  `x3_entrega2.py`, `x3_entrega3.py`), los controles de `~` de `x3_entrega4_controles.py`, 6 casos B14 (B6.28–B6.29d), 7 casos
+  B15 (B6.30–B6.31d) y 3 casos B20 (B20.0–B20.2). `probar_instalador.py` también CUMPLE.
 - **X3 real CUMPLE** según 07 (evento `verificado` 22574, evidencia 182, leídos en el registro). Lo examinó en solo lectura sobre la
   sesión real de 02, con los módulos de 78665a5: cerco en vivo, ENTREGA válida de la tarea 48 y cola conservada con la KB caída (§4.4).
   78665a5 en local también CUMPLE (22580).
@@ -505,6 +506,8 @@ Invocación: `C:\Python313\python.exe "<carpeta>\.claude\caparazon\<hook>.py"` c
 | commit_msg.py | fichero con el pie en un párrafo y `Co-Authored-By` en otro, ambos al final | exit 0; el fichero queda con un solo bloque final y `git interpret-trailers --parse` lista Chat, Model, Plan, Tarea y Co-Authored-By |
 | commit_msg.py | fichero con el pie en medio del cuerpo y otro párrafo al final | exit 1, "tiene que ir en el último párrafo" |
 | commit_msg.py | fichero con `Chat:` o `Model:` repetidos, aunque el último valor sea el correcto | exit 1, "'Chat:' aparece 2 veces; tiene que aparecer una sola vez" |
+| post_tool_use.py | Bash `git -C <wt-extra> merge main` deja ficheros fuera de permitidos del wt-extra | exit 0; la auditoría detecta `git merge` en el comando y añade los ficheros al baseline `sucios_inicio_extra` (B20) |
+| post_tool_use.py | Bash sin merge deja ficheros fuera de permitidos del wt-extra (tras un merge previo) | exit 2, "auditoría git" con el fichero nuevo; los ficheros del merge anterior siguen en el baseline (B20) |
 
 Todo junto:
 ```
@@ -532,7 +535,10 @@ Las 4 pruebas de X3:
 10. varios planes (B14): el brief lista tareas de todos los planes, `Plan: <id>` + `Tarea: <id>` en la ENTREGA selecciona, los
     permitidos del cerco son la unión, `commit_msg.py` valida `Plan:` contra `planes_trabajables` → B6.28–B6.29d;
 11. SSH-git bloqueado (B15): `ssh host "git commit …"` / `push` / `checkout` → bloqueado; `ssh host "git log …"` / `"sqlite3 …"` /
-    `"python3 plantilla/…"` / `"git status"` → pasa → B6.30–B6.31d.
+    `"python3 plantilla/…"` / `"git status"` → pasa → B6.30–B6.31d;
+12. auditoría merge (B20): un `git merge`/`pull`/`rebase` en un Bash trae ficheros de otros commits que no son escrituras del agente;
+    la auditoría añade esos ficheros al baseline y no los bloquea; una escritura propia posterior fuera de permitidos sigue bloqueada →
+    B20.0–B20.2.
 
 ## 4. Evidencia
 
@@ -983,6 +989,8 @@ permiso ajenos `reinstalar no cambia nada (19 ficheros, ni contenido ni fecha)`.
 - B16+B17, casefold Windows y aviso reintentable (lead, 16-sep): 723787a B16+B17. main bbd6cca.
 - B18, túnel aviso (lead, 16-sep): 63c7439 B18. main 7aedb15.
 - B19, descubrimiento de planes (lead, 16-sep): a89d1e6 B19. main 9f891bb.
+- B6.29b, plan inexistente dice causa real (lead, 16-sep): d8b22ac B6.29b.
+- B20, auditoría merge (lead, 16-sep): 0e43d77 B20. 159/159 CUMPLE.
 ```
    f1ef77f..9e41ca1  chat/08-caparazon -> chat/08-caparazon
 git merge-tree --write-tree origin/main(65d7940) HEAD → exit 0   (f1ef77f ya está en main)
@@ -1211,7 +1219,16 @@ GitHub (gh): rama chat/02-backend-api: CI sin runs · sin PR · main: CI CI/CD f
   - `refrescar_trabajo`: escanea `/planes` en cada prompt para descubrir planes nuevos que cumplan `buscar_plan`, añade sus tareas,
     permisos y planes al estado, y lo avisa ("planes nuevos descubiertos: <id>");
   - causa raíz del evento 23407: PLAN-CS-T11 se abrió después del SessionStart de 01 → no estaba en `planes_trabajables` →
-    `tarea_de_entrega` lo rechazaba. PLAN-CS-T14 pasaba porque existía al arrancar la sesión.
+    `tarea_de_entrega` lo rechazaba. PLAN-CS-T14 pasaba porque existía al arrancar la sesión;
+- B20 (lead, 16-sep, evento 23596 de 02): `cambios_git()` compara contra `sucios_inicio` (foto al inicio de sesión). Tras un
+  `git merge main` en un worktree extra, los ficheros del merge aparecían como cambios nuevos fuera de `permitidos` → falso
+  `bloqueo:cerco`. Arreglado en `post_tool_use.py`:
+  - si el comando Bash/PowerShell contiene `git merge`, `git pull` o `git rebase`, la auditoría añade los ficheros actuales al
+    baseline (`sucios_inicio` / `sucios_inicio_extra`) con una unión: los ficheros del merge pasan a formar parte de la foto y
+    no se marcan como escrituras del agente;
+  - una escritura propia posterior fuera de `permitidos` sigue bloqueada, porque no está en el baseline;
+  - causa raíz del evento 23596: 02 hizo `git merge main` en su wt-plantilla; los ficheros del merge (caparazón, FASE4.md, etc.)
+    estaban fuera de `specs/T01/**` → auditoría los bloqueó como si 02 los hubiera escrito.
 
 **Hallazgos:**
 - `evento.firma` es el raíl de certificación: la idempotencia de la cola va por clave natural.
