@@ -550,7 +550,7 @@ stack:
       para_que: Servidor MCP que expone lectura/escritura del registro a los chats
       por_que: Los chats no hacen SSH directo; el MCP aplica permisos por rol
       lineas: [T09]
-      evidencia: [caparazon/plantillas/mcp.json.jinja]
+      evidencia: [caparazon/plantillas/mcp.json@sypnose]
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
@@ -562,7 +562,7 @@ stack:
       para_que: Servidor MCP para la base de conocimiento del proyecto
       por_que: Lecciones aprendidas, notificaciones inter-agente, búsqueda semántica
       lineas: [T09]
-      evidencia: [caparazon/plantillas/mcp.json.jinja]
+      evidencia: [caparazon/plantillas/mcp.json@knowledge-hub]
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
@@ -610,7 +610,7 @@ stack:
       para_que: Base de conocimiento con alertas, feedback y lecciones del proyecto
       por_que: Mejora continua; cada arquitecto reporta §4.1
       lineas: [T09]
-      evidencia: [caparazon/plantillas/mcp.json.jinja@knowledge-hub]
+      evidencia: [caparazon/plantillas/mcp.json@knowledge-hub]
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
@@ -646,7 +646,7 @@ stack:
       para_que: Tests como entrega; CI bloquea merge si cobertura < 85%
       por_que: Regla del banco; cov-fail-under=85 en pipeline
       lineas: [T07, T14]
-      evidencia: [.github/workflows/ci.yml@pytest --cov, .github/workflows/ci.yml@cov-fail-under]
+      evidencia: [microservicio/esqueleto/.github/workflows/ci.yml@--cov-fail-under=85]
       estado: implementado
       decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
       que_cambia: []
@@ -682,7 +682,7 @@ stack:
       para_que: Decisiones numeradas y fechadas en PLAN.md y TRASPASO-* como ADR ligero
       por_que: Auditoría de decisiones de arquitectura sin herramienta externa
       lineas: [T09]
-      evidencia: [TRASPASO.md, TRASPASO-5.md]
+      evidencia: [FASE4.md, FASE-COMPUERTA-D7.md, FASE-COMPUERTA-D7B.md]
       estado: implementado
       decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
       que_cambia: []
