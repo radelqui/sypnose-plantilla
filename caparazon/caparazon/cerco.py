@@ -49,14 +49,20 @@ def relativa(ruta_n: str, base_n: str) -> str:
 
 
 def _patron(glob: str) -> re.Pattern:
-    """Glob de permitidos: `**` a cualquier profundidad; `*` y `?` dentro de un solo nivel."""
-    return re.compile("".join({"**": ".*", "*": "[^/]*", "?": "[^/]"}.get(p, re.escape(p)) for p in re.split(r"(\*\*|\*|\?)", glob)) + r"\Z")
+    """Glob de permitidos: `**` a cualquier profundidad; `*` y `?` dentro de un solo nivel. B16: en Windows, re.IGNORECASE."""
+    return re.compile("".join({"**": ".*", "*": "[^/]*", "?": "[^/]"}.get(p, re.escape(p)) for p in re.split(r"(\*\*|\*|\?)", glob)) + r"\Z",
+                      re.IGNORECASE if os.name == "nt" else 0)
+
+
+def _fold(s: str) -> str:
+    """B16: en Windows, casefold como red de seguridad sobre normcase (os.path.normcase ya baja a minúsculas, pero casefold cubre Unicode)."""
+    return s.casefold() if os.name == "nt" else s
 
 
 def rel_permitida(rel: str, permitidos: list[str]) -> bool:
-    rel = os.path.normcase(rel).replace("\\", "/")
+    rel = _fold(os.path.normcase(rel).replace("\\", "/"))
     for a in permitidos:
-        a_n = os.path.normcase(a.strip().strip("`")).replace("\\", "/")
+        a_n = _fold(os.path.normcase(a.strip().strip("`")).replace("\\", "/"))
         if "*" in a_n or "?" in a_n:
             if _patron(a_n.strip("/")).match(rel):
                 return True
