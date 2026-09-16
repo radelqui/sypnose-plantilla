@@ -137,7 +137,7 @@ def main():
                 "'Demostrar que la plantilla instancia un segundo servicio funcional', "
                 "'Validar reutilización del esqueleto y cubrir T04/T11 con UI React mínima', "
                 "?, 'abierto', ?, 'H:carlos', '10-como-estoy-hecho/wt', ?)",
-                (SOL_ID, ACTOR, ahora()),
+                (PLAN_ID, SOL_ID, ACTOR, ahora()),
             )
         print(f"  [plan] {PLAN_ID} creado (afecta={SOL_ID})")
     else:
