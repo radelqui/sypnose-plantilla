@@ -369,6 +369,33 @@ def main() -> None:
               f"exit={p.returncode}\nstderr: {p.stderr.strip()[:600]}\nHEAD antes {cabeza[:10]} · después {despues[:10]}\n→ {'CUMPLE' if ok else 'NO CUMPLE'}")
         RESULTADOS.append(("B5.3 git commit real sin pie", "CUMPLE" if ok else "NO CUMPLE"))
 
+    # B24 (lead, 16-sep): merge de origin/main no necesita trailers en el commit-msg
+    b24_repo = tmp / "b24-repo"
+    subprocess.run(["git", "init", "-q", str(b24_repo)], capture_output=True, check=True)
+    subprocess.run(["git", "-C", str(b24_repo), "config", "user.email", "test@test.com"], capture_output=True)
+    subprocess.run(["git", "-C", str(b24_repo), "config", "user.name", "Test"], capture_output=True)
+    subprocess.run(["git", "-C", str(b24_repo), "commit", "--allow-empty", "-m", "init"], capture_output=True, check=True)
+    sha_24 = subprocess.run(["git", "-C", str(b24_repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    subprocess.run(["git", "-C", str(b24_repo), "update-ref", "refs/remotes/origin/main", sha_24], capture_output=True, check=True)
+    (b24_repo / ".git" / "MERGE_HEAD").write_text(sha_24 + "\n", encoding="utf-8")
+    merge_msg_p = tmp / "merge_msg.txt"
+    merge_msg_p.write_text("Merge remote-tracking branch 'origin/main'\n", encoding="utf-8")
+    p_240 = subprocess.run([sys.executable, str(dir_capa / "commit_msg.py"), str(merge_msg_p)],
+                           capture_output=True, text=True, env={**os.environ, **env}, cwd=str(b24_repo), timeout=60)
+    ok_240 = p_240.returncode == 0
+    print(f"\n── B24.0 commit-msg: merge de origin/main → pasa sin trailers ──\nexit={p_240.returncode}"
+          f"\nstderr: {p_240.stderr.strip()[:300]}\n→ {'CUMPLE' if ok_240 else 'NO CUMPLE'}")
+    RESULTADOS.append(("B24.0 commit-msg: merge de origin/main → pasa sin trailers", "CUMPLE" if ok_240 else "NO CUMPLE"))
+    (b24_repo / ".git" / "MERGE_HEAD").unlink(missing_ok=True)
+    normal_msg_p = tmp / "normal_msg_b24.txt"
+    normal_msg_p.write_text("feat: cambio sin pie\n\nDetalle del cambio.\n", encoding="utf-8")
+    p_241 = subprocess.run([sys.executable, str(dir_capa / "commit_msg.py"), str(normal_msg_p)],
+                           capture_output=True, text=True, env={**os.environ, **env}, cwd=str(b24_repo), timeout=60)
+    ok_241 = p_241.returncode != 0 and "COMMIT RECHAZADO" in p_241.stderr
+    print(f"\n── B24.1 commit-msg (control): commit normal sin trailers → sigue rechazado ──\nexit={p_241.returncode}"
+          f"\nstderr: {p_241.stderr.strip()[:300]}\n→ {'CUMPLE' if ok_241 else 'NO CUMPLE'}")
+    RESULTADOS.append(("B24.1 commit-msg (control): commit normal sin trailers → sigue rechazado", "CUMPLE" if ok_241 else "NO CUMPLE"))
+
     stop = {**base, "hook_event_name": "Stop", "stop_hook_active": False}
     comprobacion = "pytest tests/test_main.py tests/test_engine_mode.py -q"
     if abierto:
