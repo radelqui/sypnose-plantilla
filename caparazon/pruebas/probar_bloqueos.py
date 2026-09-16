@@ -369,6 +369,33 @@ def main() -> None:
               f"exit={p.returncode}\nstderr: {p.stderr.strip()[:600]}\nHEAD antes {cabeza[:10]} · después {despues[:10]}\n→ {'CUMPLE' if ok else 'NO CUMPLE'}")
         RESULTADOS.append(("B5.3 git commit real sin pie", "CUMPLE" if ok else "NO CUMPLE"))
 
+    # B24 (lead, 16-sep): merge de origin/main no necesita trailers en el commit-msg
+    b24_repo = tmp / "b24-repo"
+    subprocess.run(["git", "init", "-q", str(b24_repo)], capture_output=True, check=True)
+    subprocess.run(["git", "-C", str(b24_repo), "config", "user.email", "test@test.com"], capture_output=True)
+    subprocess.run(["git", "-C", str(b24_repo), "config", "user.name", "Test"], capture_output=True)
+    subprocess.run(["git", "-C", str(b24_repo), "commit", "--allow-empty", "-m", "init"], capture_output=True, check=True)
+    sha_24 = subprocess.run(["git", "-C", str(b24_repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    subprocess.run(["git", "-C", str(b24_repo), "update-ref", "refs/remotes/origin/main", sha_24], capture_output=True, check=True)
+    (b24_repo / ".git" / "MERGE_HEAD").write_text(sha_24 + "\n", encoding="utf-8")
+    merge_msg_p = tmp / "merge_msg.txt"
+    merge_msg_p.write_text("Merge remote-tracking branch 'origin/main'\n", encoding="utf-8")
+    p_240 = subprocess.run([sys.executable, str(dir_capa / "commit_msg.py"), str(merge_msg_p)],
+                           capture_output=True, text=True, env={**os.environ, **env}, cwd=str(b24_repo), timeout=60)
+    ok_240 = p_240.returncode == 0
+    print(f"\n── B24.0 commit-msg: merge de origin/main → pasa sin trailers ──\nexit={p_240.returncode}"
+          f"\nstderr: {p_240.stderr.strip()[:300]}\n→ {'CUMPLE' if ok_240 else 'NO CUMPLE'}")
+    RESULTADOS.append(("B24.0 commit-msg: merge de origin/main → pasa sin trailers", "CUMPLE" if ok_240 else "NO CUMPLE"))
+    (b24_repo / ".git" / "MERGE_HEAD").unlink(missing_ok=True)
+    normal_msg_p = tmp / "normal_msg_b24.txt"
+    normal_msg_p.write_text("feat: cambio sin pie\n\nDetalle del cambio.\n", encoding="utf-8")
+    p_241 = subprocess.run([sys.executable, str(dir_capa / "commit_msg.py"), str(normal_msg_p)],
+                           capture_output=True, text=True, env={**os.environ, **env}, cwd=str(b24_repo), timeout=60)
+    ok_241 = p_241.returncode != 0 and "COMMIT RECHAZADO" in p_241.stderr
+    print(f"\n── B24.1 commit-msg (control): commit normal sin trailers → sigue rechazado ──\nexit={p_241.returncode}"
+          f"\nstderr: {p_241.stderr.strip()[:300]}\n→ {'CUMPLE' if ok_241 else 'NO CUMPLE'}")
+    RESULTADOS.append(("B24.1 commit-msg (control): commit normal sin trailers → sigue rechazado", "CUMPLE" if ok_241 else "NO CUMPLE"))
+
     stop = {**base, "hook_event_name": "Stop", "stop_hook_active": False}
     comprobacion = "pytest tests/test_main.py tests/test_engine_mode.py -q"
     if abierto:
@@ -1051,6 +1078,57 @@ def main() -> None:
         print(f"\n── B9.1 modo local: ninguna cola del arnés intentó enviar por ssh ──\ncolas con fallo de ssh: {con_ssh or 'ninguna'}\n"
               f"→ {'NO CUMPLE' if con_ssh else 'CUMPLE'}")
         RESULTADOS.append(("B9.1 modo local: ninguna cola del arnés intentó enviar por ssh", "NO CUMPLE" if con_ssh else "CUMPLE"))
+
+    # B23 (lead, 16-sep): reinstalación sin flags explícitos conserva config existente (modo, plan_id, worktrees_extra).
+    instalador = str(AQUI.parent / "instalar_caparazon.py")
+    b23_carpeta = tmp / "b23-carpeta"
+    b23_carpeta.mkdir()
+    b23_wt = tmp / "b23-wt"
+    subprocess.run(["git", "init", "-q", str(b23_wt)], capture_output=True, check=True)
+    b23_extra = tmp / "b23-extra"
+    subprocess.run(["git", "init", "-q", str(b23_extra)], capture_output=True, check=True)
+    p1 = subprocess.run([sys.executable, instalador, str(b23_carpeta), "--worktree", str(b23_wt),
+                         "--modo", "real", "--plan-id", "PLAN-CS-T01", "--prefijo-planes", "PLAN-CS",
+                         "--worktree-extra", f"{b23_extra}:specs/T01/**"],
+                        capture_output=True, text=True, timeout=60)
+    cfg1 = json.loads((b23_carpeta / ".claude" / "caparazon" / "config.json").read_text(encoding="utf-8"))
+    set1 = json.loads((b23_carpeta / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    p2 = subprocess.run([sys.executable, instalador, str(b23_carpeta), "--worktree", str(b23_wt)],
+                        capture_output=True, text=True, timeout=60)
+    cfg2 = json.loads((b23_carpeta / ".claude" / "caparazon" / "config.json").read_text(encoding="utf-8"))
+    set2 = json.loads((b23_carpeta / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    ok_230 = (p2.returncode == 0
+              and cfg2.get("plan_id") == "PLAN-CS-T01"
+              and cfg2.get("prefijo_planes") == "PLAN-CS"
+              and len(cfg2.get("worktrees_extra", [])) == 1
+              and cfg2["worktrees_extra"][0]["ruta"] == str(b23_extra.resolve())
+              and set2.get("env", {}).get("SYPNOSE_MODO") == "real")
+    print(f"\n── B23.0 instalar: reinstalación sin flags preserva modo=real, plan_id, prefijo_planes y worktrees_extra ──"
+          f"\nexit={p2.returncode} modo={set2.get('env', {}).get('SYPNOSE_MODO')} plan_id={cfg2.get('plan_id')} "
+          f"prefijo={cfg2.get('prefijo_planes')} extras={cfg2.get('worktrees_extra', [])}"
+          f"\n→ {'CUMPLE' if ok_230 else 'NO CUMPLE'}")
+    RESULTADOS.append(("B23.0 instalar: reinstalación sin flags preserva config existente", "CUMPLE" if ok_230 else "NO CUMPLE"))
+    p3 = subprocess.run([sys.executable, instalador, str(b23_carpeta), "--worktree", str(b23_wt), "--modo", "prueba"],
+                        capture_output=True, text=True, timeout=60)
+    ok_231 = p3.returncode != 0 and "ABORTADO" in p3.stderr
+    print(f"\n── B23.1 instalar: --modo prueba sobre instalación real sin --forzar-prueba → aborta ──"
+          f"\nexit={p3.returncode}\nstderr: {p3.stderr.strip()[:400]}"
+          f"\n→ {'CUMPLE' if ok_231 else 'NO CUMPLE'}")
+    RESULTADOS.append(("B23.1 instalar: --modo prueba sobre real sin --forzar-prueba → aborta", "CUMPLE" if ok_231 else "NO CUMPLE"))
+    p4 = subprocess.run([sys.executable, instalador, str(b23_carpeta), "--worktree", str(b23_wt),
+                         "--modo", "prueba", "--forzar-prueba"],
+                        capture_output=True, text=True, timeout=60)
+    set4 = json.loads((b23_carpeta / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    ok_232 = p4.returncode == 0 and set4.get("env", {}).get("SYPNOSE_MODO") == "prueba"
+    print(f"\n── B23.2 instalar: --modo prueba --forzar-prueba sobre real → éxito y modo=prueba ──"
+          f"\nexit={p4.returncode} modo={set4.get('env', {}).get('SYPNOSE_MODO')}"
+          f"\n→ {'CUMPLE' if ok_232 else 'NO CUMPLE'}")
+    RESULTADOS.append(("B23.2 instalar: --forzar-prueba degrada de real a prueba", "CUMPLE" if ok_232 else "NO CUMPLE"))
+    ok_233 = "config resultante:" in p2.stdout and "PLAN-CS-T01" in p2.stdout
+    print(f"\n── B23.3 instalar: la salida imprime la config resultante ──"
+          f"\nstdout contiene 'config resultante:' y plan_id = {'sí' if ok_233 else 'no'}"
+          f"\n→ {'CUMPLE' if ok_233 else 'NO CUMPLE'}")
+    RESULTADOS.append(("B23.3 instalar: la salida imprime la config resultante", "CUMPLE" if ok_233 else "NO CUMPLE"))
 
     print(f"\n══ Evidencia en el registro (actor {args.actor}, desde {inicio}) ══")
     if db:

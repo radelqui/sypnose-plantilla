@@ -2,15 +2,18 @@
 
 # FASE 4 — EL CAPARAZÓN (TRASPASO-4 §2, B1–B9)
 
-**Estado (16-sep-2026):** B1–B17 + túnel aviso + descubrimiento de planes + auditoría merge + descriptor de fichero + forma_pura multi-worktree construidos con las decisiones del lead
+**Estado (16-sep-2026):** B1–B17 + túnel aviso + descubrimiento de planes + auditoría merge + descriptor de fichero + forma_pura multi-worktree
++ preservar config en reinstalación + merge sin trailers construidos con las decisiones del lead
 (cola local, grafo del repo, propuesta de canal, Stop en continuación, ENTREGA solo con comprobación en verde, pie de commit en el
 último párrafo, comprobación ejecutada tal cual y contra la base del registro, barrera de escritura en vivo, multi-plan, bloqueo SSH-git,
 casefold Windows, aviso reintentable, aviso y bloqueo por túnel caído, descubrimiento de planes nuevos en cada prompt, auditoría git
 que distingue merge-brought de escrituras propias, tokenizador de cerco que distingue descriptores de fichero de rutas,
-forma_pura que acepta cd a worktrees_extra y plan.worktree).
-- **163/163 pruebas de bloqueo CUMPLE** en modo local (1a98768). Incluyen los 19 casos de los scripts de 07 (`x3_trailers.py`,
+forma_pura que acepta cd a worktrees_extra y plan.worktree, reinstalación que preserva modo/plan_id/worktrees_extra/prefijo_planes/coleccion/kb_proyecto/verificador/SSH,
+commit-msg que acepta merges de origin sin trailers).
+- **169/169 pruebas de bloqueo CUMPLE** en modo local. Incluyen los 19 casos de los scripts de 07 (`x3_trailers.py`,
   `x3_entrega2.py`, `x3_entrega3.py`), los controles de `~` de `x3_entrega4_controles.py`, 6 casos B14 (B6.28–B6.29d), 7 casos
-  B15 (B6.30–B6.31d), 3 casos B20 (B20.0–B20.2), 2 casos B21 (B21.0–B21.1) y 2 casos B22 (B22.0–B22.1). `probar_instalador.py` también CUMPLE.
+  B15 (B6.30–B6.31d), 3 casos B20 (B20.0–B20.2), 2 casos B21 (B21.0–B21.1), 2 casos B22 (B22.0–B22.1), 4 casos B23 (B23.0–B23.3)
+  y 2 casos B24 (B24.0–B24.1). `probar_instalador.py` también CUMPLE.
 - **X3 real CUMPLE** según 07 (evento `verificado` 22574, evidencia 182, leídos en el registro). Lo examinó en solo lectura sobre la
   sesión real de 02, con los módulos de 78665a5: cerco en vivo, ENTREGA válida de la tarea 48 y cola conservada con la KB caída (§4.4).
   78665a5 en local también CUMPLE (22580).
@@ -545,6 +548,11 @@ Las 4 pruebas de X3:
     B21.0–B21.1.
 14. forma_pura multi-worktree (B22): `forma_pura()` aceptaba `cd` solo al worktree principal; ahora acepta también worktrees_extra de la
     config y plan.worktree del registro; una ruta ajena sigue rechazada → B22.0–B22.1.
+15. preservar config en reinstalación (B23+B25): `instalar_caparazon.py` conserva `modo`, `plan_id`, `worktrees_extra`,
+    `prefijo_planes`, `coleccion`, `kb_proyecto`, `verificador` y los campos SSH de la config existente si no se pasan flags
+    explícitos; degradar de `real` a `prueba` exige `--forzar-prueba`; imprime la config resultante → B23.0–B23.3.
+16. merge de origin sin trailers (B24): `commit-msg` acepta commits cuyo mensaje empieza por "Merge " y cuyo `MERGE_HEAD` está en una
+    rama remota (`git branch -r --contains`); un commit normal sin trailers sigue rechazado → B24.0–B24.1.
 
 ## 4. Evidencia
 
@@ -999,6 +1007,9 @@ permiso ajenos `reinstalar no cambia nada (19 ficheros, ni contenido ni fecha)`.
 - B20, auditoría merge (lead, 16-sep): 0e43d77 B20. 159/159 CUMPLE.
 - B21, descriptor de fichero en redirecciones (lead, 16-sep): 9f2bcdd B21. 161/161 CUMPLE.
 - B22, forma_pura multi-worktree (lead, 16-sep): 1a98768 B22. 163/163 CUMPLE.
+- B23, preservar config en reinstalación (lead, 16-sep): B23. 167/167 CUMPLE.
+- B24, merge de origin sin trailers (lead, 16-sep): B24. 169/169 CUMPLE.
+- B25, preservar todos los campos en reinstalación (arquitecto, 16-sep): B25. 169/169 CUMPLE.
 ```
    f1ef77f..9e41ca1  chat/08-caparazon -> chat/08-caparazon
 git merge-tree --write-tree origin/main(65d7940) HEAD → exit 0   (f1ef77f ya está en main)
@@ -1256,6 +1267,36 @@ GitHub (gh): rama chat/02-backend-api: CI sin runs · sin PR · main: CI CI/CD f
   - el check `cerco.dentro(base, zona)` acepta si `base` está dentro de cualquiera de las zonas;
   - una ruta que no pertenece a ninguna zona sigue rechazada;
   - `validar()` pasa `estado["plan"]["worktree"]` al nuevo parámetro `plan_worktree` de `forma_pura`.
+
+- **B23, preservar config en reinstalación (lead, 16-sep):** una reinstalación sin `--modo real` ni `--worktree-extra` sobreescribía
+  `config.json` con los defaults de argparse (`modo=prueba`, `plan_id=None`, `worktrees_extra=[]`), perdiendo la configuración
+  activa. Afectó a 01 (y probablemente 02/03/04) durante la reinstalación del arquitecto tras B22. Arreglado:
+  - si `config.json` ya existe, `instalar_caparazon.py` lee el modo actual (`SYPNOSE_MODO` de `settings.json`), el `plan_id` y los
+    `worktrees_extra` de `config.json` y los preserva salvo que se pasen flags explícitos;
+  - si el modo anterior era `real` y se pide `--modo prueba` sin `--forzar-prueba`, aborta con aviso;
+  - imprime la config resultante (modo, plan_id, worktrees_extra) al final de cada instalación;
+  - causa raíz: `argparse` default de `--modo` era `"prueba"` y de `--worktree-extra` era `[]`; cambiados a `None` y detección de
+    presencia explícita.
+
+- **B24, merge de origin sin trailers (lead, 16-sep, evento 23813 en 01):** `git merge origin/main --no-edit` genera un commit con
+  mensaje "Merge remote-tracking branch 'origin/main'" sin trailers Chat/Model/Plan/Tarea. El hook `commit-msg` lo rechazaba como
+  cualquier commit sin pie. Los merges de origin no son trabajo del agente. Arreglado:
+  - `es_merge_de_origin()` comprueba dos condiciones: 1) existe `MERGE_HEAD` en el repo (`git rev-parse -q --verify MERGE_HEAD`),
+    y 2) ese commit está en una rama remota (`git branch -r --contains <sha>`);
+  - si el mensaje empieza por "Merge " y ambas condiciones se cumplen, el hook sale con 0 sin comprobar trailers;
+  - un commit normal sin trailers sigue rechazado como antes.
+
+- **B25, preservar todos los campos en reinstalación (arquitecto, 16-sep):** el arquitecto reportó que `prefijo_planes` se revirtió
+  a `"PLAN-CS-"` (default del instalador) tras reinstalar sin `--prefijo-planes`, cuando la config tenía `"PLAN-CS"`. El mismo defecto
+  de B23 afectaba a todos los demás argparse-backed fields: `coleccion`, `kb_proyecto`, `verificador`, `ssh_destino`, `ssh_puerto`,
+  `ssh_clave`, `registro_db`. Arreglado:
+  - todos los `default=` de argparse cambiados a `None`;
+  - el bloque de preservación hereda cada campo de `config_prev` si el argparse da `None`;
+  - fallback defaults explícitos para primera instalación (cuando no hay `config_prev`);
+  - test B23.0 ampliado: instala con `--prefijo-planes "PLAN-CS"`, reinstala sin flags, verifica que `prefijo_planes` sigue siendo
+    `"PLAN-CS"`.
+  - causa raíz: B23 solo cambió a `None` los defaults de `--modo`, `--plan-id` y `--worktree-extra`; los demás campos conservaban
+    su default de argparse, que machacaba el valor personalizado de la config existente.
 
 **Hallazgos:**
 - `evento.firma` es el raíl de certificación: la idempotencia de la cola va por clave natural.

@@ -175,8 +175,8 @@ cubre_por_evidencia:
   T12: observado
   T13: observado
   T14: observado     # gh:run:34983669221 success (lead autoriza subida)
-  T04: propuesto     # como-estoy-hecho React UI (04-agentes, tarea 61)
-  T11: propuesto     # como-estoy-hecho React frontend (04-agentes, tarea 61)
+  T04: observado     # como-estoy-hecho React UI: viewport meta + static served
+  T11: observado     # como-estoy-hecho React frontend: SPA placeholder + domain router
   T15: observado
 # Líneas de proceso: no tienen archivos de código; su certeza viene de evidencias evento:/git:commit:.
 lineas_de_proceso: [T06, T09]
@@ -202,6 +202,17 @@ segunda_solucion:
   repo: radelqui/como-estoy-hecho
   chat: 10-como-estoy-hecho
   lineas: [T02, T03, T04, T11, T12, T13, T14, T15]
+  # Archivos del repo como-estoy-hecho que cubren cada línea.
+  # enlazar_solucion.py usa esto para validar fuentes y crear relaciones cubre.
+  archivos_por_linea:
+    T02: [app/como_estoy_hecho/router.py]
+    T03: [app/como_estoy_hecho/router.py, app/main.py]
+    T04: [app/como_estoy_hecho/static/index.html]
+    T11: [app/como_estoy_hecho/static/index.html, app/como_estoy_hecho/router.py]
+    T12: [app/como_estoy_hecho/pii.py, app/como_estoy_hecho/oferta.py]
+    T13: [app/main.py]
+    T14: [tests/test_integration.py, tests/test_autodiscovery.py]
+    T15: [app/main.py, tests/test_integration.py]
 # A5.5 (16-sep): Stack como dato del registro. Cada entrada verificada contra el repo real.
 # cargar_stack.py crea nodos tec:coforge:<id>, relaciones usa/cubre, afirmaciones.
 # decide_banco: qué puede tener el banco en su lugar. que_cambia: ficheros que se tocan.
@@ -416,12 +427,84 @@ stack:
       nombre: React/Vue con EventSource
       grupo: opcional
       para_que: Frontend SPA que consume SSE del agente
-      por_que: Deseable según oferta (T04/T11); no implementado en el POC
+      por_que: Deseable según oferta (T04/T11); implementado como placeholder React en como-estoy-hecho
       lineas: [T04, T11]
-      evidencia: []
-      estado: opcional-no-implementado
+      evidencia: [como-estoy-hecho:app/como_estoy_hecho/static/index.html, como-estoy-hecho:app/como_estoy_hecho/router.py]
+      estado: implementado-placeholder
       decide_banco: "Framework frontend: React, Angular, Vue, micro-frontend interno"
       que_cambia: [nuevo directorio frontend/, package.json, .github/workflows/ci.yml (build frontend)]
+      hecho_por: [IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23875, 23876]
+    - id: claude-agent-sdk-producto
+      nombre: Claude Agent SDK (producto)
+      grupo: opcional
+      para_que: "Implementar el agente ¿Cómo estoy hecho? con el SDK de Anthropic en lugar de LlamaIndex"
+      por_que: Opción preparada para el banco; el SDK de Anthropic da control directo sobre tools y streaming
+      lineas: [T02]
+      evidencia: []
+      estado: opcion-preparada
+      decide_banco: "Bedrock vía SDK de AWS o SDK de Anthropic directo"
+      que_cambia: [app/como_estoy_hecho/agente.py (adaptador de motor)]
+      hecho_por: []
+      verificado_en: []
+    - id: aws-eks
+      nombre: AWS EKS + IAM + Secrets Manager
+      grupo: opcional
+      para_que: Plataforma Kubernetes gestionada con integración IAM y secretos nativos
+      por_que: Opción preparada para el banco; EKS es la opción más probable en Santander
+      lineas: [T05, T14]
+      evidencia: []
+      estado: opcion-preparada
+      decide_banco: "EKS, AKS, OpenShift, GKE, plataforma interna del banco"
+      que_cambia: [microservicio/esqueleto/terraform/ (módulos EKS, IAM, Secrets Manager)]
+      hecho_por: []
+      verificado_en: []
+    - id: aws-bedrock
+      nombre: Amazon Bedrock
+      grupo: opcional
+      para_que: Acceso a modelos de frontera vía API gestionada de AWS con IAM
+      por_que: Alternativa a API directa de Anthropic; el banco puede preferir Bedrock por compliance
+      lineas: [T02]
+      evidencia: []
+      estado: opcion-preparada
+      decide_banco: "Bedrock, Azure OpenAI, API directa de Anthropic, modelo on-premise"
+      que_cambia: [requirements.txt (boto3 + bedrock adapter), app/core/config.py]
+      hecho_por: []
+      verificado_en: []
+    - id: terraform
+      nombre: Terraform
+      grupo: opcional
+      para_que: Infraestructura como código para el despliegue en AWS
+      por_que: Reproducibilidad; el banco puede auditar y modificar los módulos
+      lineas: [T05, T14]
+      evidencia: []
+      estado: opcion-preparada
+      decide_banco: "Terraform, CloudFormation, Pulumi, CDK, herramienta interna del banco"
+      que_cambia: [microservicio/esqueleto/terraform/]
+      hecho_por: []
+      verificado_en: []
+    - id: temporal-io
+      nombre: Temporal.io
+      grupo: opcional
+      para_que: Orquestación de workflows durables para procesos bancarios complejos
+      por_que: Opción para procesos que necesitan reintentos, compensaciones y auditoría
+      lineas: [T02]
+      evidencia: []
+      estado: opcion-preparada
+      decide_banco: "Temporal, Step Functions, Airflow, herramienta interna del banco"
+      que_cambia: [requirements.txt (temporalio), app/workflows/]
+      hecho_por: []
+      verificado_en: []
+    - id: opentelemetry
+      nombre: OpenTelemetry
+      grupo: opcional
+      para_que: Observabilidad distribuida (traces, métricas, logs) estándar CNCF
+      por_que: Instrumentación vendor-neutral; el banco elige el backend (Datadog, Grafana, etc.)
+      lineas: [T05]
+      evidencia: []
+      estado: opcion-preparada
+      decide_banco: "Backend: Datadog, Grafana Cloud, Elastic APM, Jaeger, herramienta interna"
+      que_cambia: [requirements.txt (opentelemetry-*), app/core/telemetry.py, microservicio/esqueleto/app/main.py]
       hecho_por: []
       verificado_en: []
   plantilla:
@@ -617,6 +700,18 @@ stack:
       que_cambia: []
       hecho_por: [IA:05-arquitecto-sypnose:claude-opus-4-6]
       verificado_en: [23785]
+    - id: claude-agent-sdk
+      nombre: Claude Agent SDK (Claude Code)
+      grupo: practicas-ingenieria
+      para_que: "La fábrica SYPNOSE corre sobre Claude Code, construido sobre el Claude Agent SDK: agentes por chat con hooks, MCP y permisos"
+      por_que: Cada chat es un agente con cerco, brief, commit-msg y MCP (registro + KB)
+      lineas: [T06, T09]
+      evidencia: [caparazon/plantillas/mcp.json.jinja, caparazon/caparazon/post_tool_use.py, caparazon/caparazon/cerco.py]
+      estado: implementado
+      decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
+      que_cambia: []
+      hecho_por: [IA:08-caparazon:claude-sonnet-5, IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23750, 23747, 23453]
 roles_por_linea:
   T01: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T02: {rol: 04-agentes, modelo: claude-sonnet-5}

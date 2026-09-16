@@ -1,12 +1,13 @@
 """B8: instala el caparazón SYPNOSE en una carpeta de chat (hooks, commit-msg, .mcp.json, settings.json, sección de CLAUDE.md).
 
     python instalar_caparazon.py <carpeta> [--modo prueba|real] [--worktree <ruta>] [--worktree-extra "<ruta>:<patrón>[,<patrón>]"]...
-                                 [--prefijo-planes PLAN-CS-] [--plan-id PLAN-CS-T01]
+                                 [--prefijo-planes PLAN-CS-] [--plan-id PLAN-CS-T01] [--forzar-prueba]
     python instalar_caparazon.py <carpeta> --desinstalar
 
 Escribe el marcador INSTALADO junto a los módulos y SYPNOSE_MODO en .claude/settings.json. Las sesiones de la carpeta solo escriben en
-vivo en el registro y la KB con --modo real; con --modo prueba (por defecto) los eventos se quedan en la cola local con aviso.
-Idempotente: reinstalar deja los mismos ficheros. Desinstalar retira solo lo que puso el caparazón y conserva estado y pendientes.
+vivo en el registro y la KB con --modo real; con --modo prueba (por defecto en primera instalación) los eventos se quedan en la cola local.
+B23: si ya existe config.json, la reinstalación conserva modo, plan_id y worktrees_extra salvo que se pasen flags explícitos; degradar de
+real a prueba exige --forzar-prueba. Desinstalar retira solo lo que puso el caparazón y conserva estado y pendientes.
 """
 from __future__ import annotations
 
@@ -116,6 +117,38 @@ def instalar(args, carpeta: Path, wt: Path) -> None:
     ssh_bin = shutil.which("ssh") or "ssh"
     print(f"[caparazón] instalando en {carpeta} (worktree {wt})")
 
+    # B23: preservar config existente en reinstalación
+    config_prev = leer_json(dir_capa / "config.json")
+    extras_preservados = None
+    if config_prev:
+        settings_prev = leer_json(dir_claude / "settings.json")
+        modo_prev = settings_prev.get("env", {}).get("SYPNOSE_MODO", "prueba")
+        if args.modo is None:
+            args.modo = modo_prev
+            print(f"  modo preservado de la instalación anterior: {args.modo}")
+        elif args.modo == "prueba" and modo_prev == "real" and not args.forzar_prueba:
+            sys.exit("[caparazón] ABORTADO: la instalación actual es modo real; para degradar a prueba: --modo prueba --forzar-prueba")
+        if args.plan_id is None:
+            args.plan_id = config_prev.get("plan_id")
+        if not args.worktree_extra:
+            extras_preservados = config_prev.get("worktrees_extra", [])
+        for campo in ("coleccion", "kb_proyecto", "prefijo_planes", "verificador"):
+            if getattr(args, campo) is None and campo in config_prev:
+                setattr(args, campo, config_prev[campo])
+        ssh_prev = config_prev.get("ssh", {})
+        for campo_args, campo_ssh in [("ssh_destino", "destino"), ("ssh_puerto", "puerto"),
+                                       ("ssh_clave", "clave"), ("registro_db", "db")]:
+            if getattr(args, campo_args) is None and campo_ssh in ssh_prev:
+                setattr(args, campo_args, ssh_prev[campo_ssh])
+    if args.modo is None:
+        args.modo = "prueba"
+    for campo, defecto in [("coleccion", "coforge-santander"), ("kb_proyecto", "coforge-santander"),
+                            ("prefijo_planes", "PLAN-CS-"), ("verificador", "07-verificador"),
+                            ("ssh_destino", "sypnose@62.171.147.46"), ("ssh_puerto", 2024),
+                            ("ssh_clave", "~/.ssh/id_ed25519_radelqui"), ("registro_db", "/home/sypnose/sypnose-f1/registry.db")]:
+        if getattr(args, campo) is None:
+            setattr(args, campo, defecto)
+
     for nombre in MODULOS:
         origen = RAIZ / "caparazon" / nombre
         destino = dir_capa / nombre
@@ -126,7 +159,8 @@ def instalar(args, carpeta: Path, wt: Path) -> None:
     config = {
         "carpeta": carpeta.name, "carpeta_ruta": str(carpeta), "worktree": str(wt),
         "coleccion": args.coleccion, "kb_proyecto": args.kb_proyecto, "prefijo_planes": args.prefijo_planes,
-        "plan_id": args.plan_id, "verificador": args.verificador, "worktrees_extra": worktrees_extra(args.worktree_extra),
+        "plan_id": args.plan_id, "verificador": args.verificador,
+        "worktrees_extra": extras_preservados if extras_preservados is not None else worktrees_extra(args.worktree_extra),
         "registro_url": "http://127.0.0.1:7101", "kb_url": "http://127.0.0.1:18791", "escritura": "ssh",
         "ssh": {"bin": ssh_bin, "destino": args.ssh_destino, "puerto": args.ssh_puerto, "clave": args.ssh_clave, "db": args.registro_db},
     }
@@ -218,6 +252,9 @@ def instalar(args, carpeta: Path, wt: Path) -> None:
     escribir_json(manifiesto_p, manifiesto)
     print(f"[caparazón] instalado en modo {args.modo}. Abre el chat en la carpeta: SessionStart imprimirá el brief."
           + ("" if args.modo == "real" else " En modo prueba los eventos se quedan en la cola local; para escribir en vivo, reinstala con --modo real."))
+    print(f"  config resultante: modo={args.modo}, plan_id={config.get('plan_id')}, worktrees_extra={len(config['worktrees_extra'])}")
+    for x in config["worktrees_extra"]:
+        print(f"    {x['ruta']}: {x['permitidos']}")
 
 
 def desinstalar(carpeta: Path, wt: Path) -> None:
@@ -291,19 +328,21 @@ def main() -> None:
     ap.add_argument("carpeta")
     ap.add_argument("--worktree", help="worktree git del chat (por defecto <carpeta>/wt)")
     ap.add_argument("--desinstalar", action="store_true")
-    ap.add_argument("--modo", choices=("prueba", "real"), default="prueba",
-                    help="real: las sesiones de la carpeta escriben en vivo en el registro y la KB (SYPNOSE_MODO=real)")
+    ap.add_argument("--modo", choices=("prueba", "real"), default=None,
+                    help="real o prueba; sin flag, la reinstalación conserva el modo anterior (primera instalación: prueba)")
+    ap.add_argument("--forzar-prueba", action="store_true",
+                    help="permite degradar de modo real a prueba en una reinstalación")
     ap.add_argument("--worktree-extra", action="append", default=[], metavar="RUTA:PATRONES",
                     help="worktree adicional donde el chat puede escribir (p. ej. su spec en el repo plantilla): <ruta>:<patrón>[,<patrón>]; repetible")
-    ap.add_argument("--prefijo-planes", default="PLAN-CS-")
+    ap.add_argument("--prefijo-planes", default=None)
     ap.add_argument("--plan-id", default=None)
-    ap.add_argument("--coleccion", default="coforge-santander")
-    ap.add_argument("--kb-proyecto", default="coforge-santander")
-    ap.add_argument("--verificador", default="07-verificador")
-    ap.add_argument("--ssh-destino", default="sypnose@62.171.147.46")
-    ap.add_argument("--ssh-puerto", type=int, default=2024)
-    ap.add_argument("--ssh-clave", default="~/.ssh/id_ed25519_radelqui")
-    ap.add_argument("--registro-db", default="/home/sypnose/sypnose-f1/registry.db")
+    ap.add_argument("--coleccion", default=None)
+    ap.add_argument("--kb-proyecto", default=None)
+    ap.add_argument("--verificador", default=None)
+    ap.add_argument("--ssh-destino", default=None)
+    ap.add_argument("--ssh-puerto", type=int, default=None)
+    ap.add_argument("--ssh-clave", default=None)
+    ap.add_argument("--registro-db", default=None)
     args = ap.parse_args()
     carpeta = Path(args.carpeta).resolve()
     wt = Path(args.worktree).resolve() if args.worktree else carpeta / "wt"
