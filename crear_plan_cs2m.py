@@ -101,8 +101,8 @@ def main():
     if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (SOL_ID,)).fetchone():
         if not args.dry_run:
             conn.execute(
-                "INSERT INTO nodo (id, tipo, nombre, ambito, vitalidad, descubierto_en, descubierto_por) "
-                "VALUES (?, 'solucion', 'como-estoy-hecho (Coforge/Santander)', ?, ?, ?)",
+                "INSERT INTO nodo (id, tipo, nombre, ruta, ambito, vitalidad, descubierto_en, descubierto_por) "
+                "VALUES (?, 'solucion', 'como-estoy-hecho (Coforge/Santander)', NULL, ?, 'activo', ?, ?)",
                 (SOL_ID, AMBITO, ahora(), FUENTE),
             )
         print(f"  [nodo] {SOL_ID} creado")
@@ -131,8 +131,13 @@ def main():
     if not plan_exists:
         if not args.dry_run:
             conn.execute(
-                "INSERT INTO plan (id, estado, afecta) VALUES (?, 'abierto', ?)",
-                (PLAN_ID, SOL_ID),
+                "INSERT INTO plan (id, clase, que, para, porque, afecta, estado, autor, dueno, worktree, abierto_en) "
+                "VALUES (?, 'mantener', "
+                "'Microservicio público como-estoy-hecho que expone /oferta de SYPNOSE', "
+                "'Demostrar que la plantilla instancia un segundo servicio funcional', "
+                "'Validar reutilización del esqueleto y cubrir T04/T11 con UI React mínima', "
+                "?, 'abierto', ?, 'H:carlos', '10-como-estoy-hecho/wt', ?)",
+                (SOL_ID, ACTOR, ahora()),
             )
         print(f"  [plan] {PLAN_ID} creado (afecta={SOL_ID})")
     else:
@@ -149,8 +154,8 @@ def main():
             continue
         if not args.dry_run:
             conn.execute(
-                "INSERT INTO requisito (plan_id, ref, titulo, ears, comprobacion) VALUES (?,?,?,?,?)",
-                (PLAN_ID, req["ref"], req["titulo"], req["ears"], req["comprobacion"]),
+                "INSERT INTO requisito (plan_id, ref, ears, comprobacion) VALUES (?,?,?,?)",
+                (PLAN_ID, req["ref"], req["ears"], req["comprobacion"]),
             )
         print(f"  [req] {PLAN_ID}/{req['ref']} creado")
 
