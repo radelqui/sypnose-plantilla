@@ -20,7 +20,7 @@ FUENTE = "plantilla/crear_plan_r2.py"
 
 PLAN_ID = "PLAN-CS2-R2"
 AFECTA = "sol:coforge:como-estoy-hecho"
-CLASE = "corregir"
+CLASE = "mantener"
 QUE = "Corrección R2: ficheros fuera del dominio tras resync v1.1"
 PARA = "Que diff esqueleto..HEAD fuera del dominio sea 0 y comprobar_segundo.py pase"
 PORQUE = "07b midió R2 (evento 24253): 4 ficheros fuera del dominio, NO CUMPLE"
