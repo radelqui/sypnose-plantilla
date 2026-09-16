@@ -48,7 +48,6 @@ def main():
     args = p.parse_args()
 
     verificar_sin_delete()
-    verificar_canonicos_registrados(args.db)
 
     oferta = yaml.safe_load(OFERTA_YAML.read_text(encoding="utf-8"))
     stack = oferta.get("stack", {})
@@ -59,6 +58,8 @@ def main():
     conn = sqlite3.connect(str(db))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
+
+    verificar_canonicos_registrados(conn)
 
     if not args.dry_run:
         backup_registro(conn, db, "pre-stack")
