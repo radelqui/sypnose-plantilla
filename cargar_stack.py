@@ -96,7 +96,7 @@ def main():
             estado_yaml = entry.get("estado", "implementado")
 
             todas_existen = all(evidencia_existe(e, bloque) for e in evidencias) if evidencias else False
-            certeza = "observado" if todas_existen else "declarado"
+            certeza = "observado" if todas_existen else "propuesto"
             estado_final = estado_yaml if todas_existen or estado_yaml == "opcional-no-implementado" else "declarado-sin-evidencia"
 
             if args.dry_run:
@@ -158,11 +158,12 @@ def main():
                     relaciones += 1
 
             # Afirmaciones: para_que, por_que, grupo, estado
-            for clave, valor in [("para_que", para_que), ("por_que", por_que), ("grupo", grupo), ("estado", estado_final)]:
+            ev_texto = ", ".join(evidencias) if evidencias else None
+            for campo, valor in [("para_que", para_que), ("por_que", por_que), ("grupo", grupo), ("estado", estado_final)]:
                 rc = conn.execute(
-                    "INSERT OR IGNORE INTO afirmacion (nodo_id, clave, valor, certeza, fuente, visto_en) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (nodo_id, clave, valor, certeza, FUENTE, ahora()),
+                    "INSERT OR IGNORE INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando, evidencia, vigente) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                    (nodo_id, campo, valor, certeza, FUENTE, args.actor, ahora(), ev_texto),
                 ).rowcount
                 if rc == 1:
                     afirmaciones += 1
