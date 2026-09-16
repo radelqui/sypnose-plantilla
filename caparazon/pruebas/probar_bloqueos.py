@@ -1052,6 +1052,56 @@ def main() -> None:
               f"→ {'NO CUMPLE' if con_ssh else 'CUMPLE'}")
         RESULTADOS.append(("B9.1 modo local: ninguna cola del arnés intentó enviar por ssh", "NO CUMPLE" if con_ssh else "CUMPLE"))
 
+    # B23 (lead, 16-sep): reinstalación sin flags explícitos conserva config existente (modo, plan_id, worktrees_extra).
+    instalador = str(AQUI.parent / "instalar_caparazon.py")
+    b23_carpeta = tmp / "b23-carpeta"
+    b23_carpeta.mkdir()
+    b23_wt = tmp / "b23-wt"
+    subprocess.run(["git", "init", "-q", str(b23_wt)], capture_output=True, check=True)
+    b23_extra = tmp / "b23-extra"
+    subprocess.run(["git", "init", "-q", str(b23_extra)], capture_output=True, check=True)
+    p1 = subprocess.run([sys.executable, instalador, str(b23_carpeta), "--worktree", str(b23_wt),
+                         "--modo", "real", "--plan-id", "PLAN-CS-T01",
+                         "--worktree-extra", f"{b23_extra}:specs/T01/**"],
+                        capture_output=True, text=True, timeout=60)
+    cfg1 = json.loads((b23_carpeta / ".claude" / "caparazon" / "config.json").read_text(encoding="utf-8"))
+    set1 = json.loads((b23_carpeta / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    p2 = subprocess.run([sys.executable, instalador, str(b23_carpeta), "--worktree", str(b23_wt)],
+                        capture_output=True, text=True, timeout=60)
+    cfg2 = json.loads((b23_carpeta / ".claude" / "caparazon" / "config.json").read_text(encoding="utf-8"))
+    set2 = json.loads((b23_carpeta / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    ok_230 = (p2.returncode == 0
+              and cfg2.get("plan_id") == "PLAN-CS-T01"
+              and len(cfg2.get("worktrees_extra", [])) == 1
+              and cfg2["worktrees_extra"][0]["ruta"] == str(b23_extra.resolve())
+              and set2.get("env", {}).get("SYPNOSE_MODO") == "real")
+    print(f"\n── B23.0 instalar: reinstalación sin flags preserva modo=real, plan_id y worktrees_extra ──"
+          f"\nexit={p2.returncode} modo={set2.get('env', {}).get('SYPNOSE_MODO')} plan_id={cfg2.get('plan_id')} "
+          f"extras={cfg2.get('worktrees_extra', [])}"
+          f"\n→ {'CUMPLE' if ok_230 else 'NO CUMPLE'}")
+    RESULTADOS.append(("B23.0 instalar: reinstalación sin flags preserva config existente", "CUMPLE" if ok_230 else "NO CUMPLE"))
+    p3 = subprocess.run([sys.executable, instalador, str(b23_carpeta), "--worktree", str(b23_wt), "--modo", "prueba"],
+                        capture_output=True, text=True, timeout=60)
+    ok_231 = p3.returncode != 0 and "ABORTADO" in p3.stderr
+    print(f"\n── B23.1 instalar: --modo prueba sobre instalación real sin --forzar-prueba → aborta ──"
+          f"\nexit={p3.returncode}\nstderr: {p3.stderr.strip()[:400]}"
+          f"\n→ {'CUMPLE' if ok_231 else 'NO CUMPLE'}")
+    RESULTADOS.append(("B23.1 instalar: --modo prueba sobre real sin --forzar-prueba → aborta", "CUMPLE" if ok_231 else "NO CUMPLE"))
+    p4 = subprocess.run([sys.executable, instalador, str(b23_carpeta), "--worktree", str(b23_wt),
+                         "--modo", "prueba", "--forzar-prueba"],
+                        capture_output=True, text=True, timeout=60)
+    set4 = json.loads((b23_carpeta / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    ok_232 = p4.returncode == 0 and set4.get("env", {}).get("SYPNOSE_MODO") == "prueba"
+    print(f"\n── B23.2 instalar: --modo prueba --forzar-prueba sobre real → éxito y modo=prueba ──"
+          f"\nexit={p4.returncode} modo={set4.get('env', {}).get('SYPNOSE_MODO')}"
+          f"\n→ {'CUMPLE' if ok_232 else 'NO CUMPLE'}")
+    RESULTADOS.append(("B23.2 instalar: --forzar-prueba degrada de real a prueba", "CUMPLE" if ok_232 else "NO CUMPLE"))
+    ok_233 = "config resultante:" in p2.stdout and "PLAN-CS-T01" in p2.stdout
+    print(f"\n── B23.3 instalar: la salida imprime la config resultante ──"
+          f"\nstdout contiene 'config resultante:' y plan_id = {'sí' if ok_233 else 'no'}"
+          f"\n→ {'CUMPLE' if ok_233 else 'NO CUMPLE'}")
+    RESULTADOS.append(("B23.3 instalar: la salida imprime la config resultante", "CUMPLE" if ok_233 else "NO CUMPLE"))
+
     print(f"\n══ Evidencia en el registro (actor {args.actor}, desde {inicio}) ══")
     if db:
         print("tarea 9:", reg.filas("SELECT progreso FROM tarea WHERE id=9"))
