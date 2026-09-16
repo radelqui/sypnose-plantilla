@@ -435,6 +435,78 @@ stack:
       que_cambia: [nuevo directorio frontend/, package.json, .github/workflows/ci.yml (build frontend)]
       hecho_por: [IA:05-arquitecto-sypnose:claude-opus-4-6]
       verificado_en: [23875, 23876]
+    - id: claude-agent-sdk-producto
+      nombre: Claude Agent SDK (producto)
+      grupo: opcional
+      para_que: "Implementar el agente ¿Cómo estoy hecho? con el SDK de Anthropic en lugar de LlamaIndex"
+      por_que: Opción preparada para el banco; el SDK de Anthropic da control directo sobre tools y streaming
+      lineas: [T02]
+      evidencia: []
+      estado: opcion-preparada
+      decide_banco: "Bedrock vía SDK de AWS o SDK de Anthropic directo"
+      que_cambia: [app/como_estoy_hecho/agente.py (adaptador de motor)]
+      hecho_por: []
+      verificado_en: []
+    - id: aws-eks
+      nombre: AWS EKS + IAM + Secrets Manager
+      grupo: opcional
+      para_que: Plataforma Kubernetes gestionada con integración IAM y secretos nativos
+      por_que: Opción preparada para el banco; EKS es la opción más probable en Santander
+      lineas: [T05, T14]
+      evidencia: []
+      estado: opcion-preparada
+      decide_banco: "EKS, AKS, OpenShift, GKE, plataforma interna del banco"
+      que_cambia: [microservicio/esqueleto/terraform/ (módulos EKS, IAM, Secrets Manager)]
+      hecho_por: []
+      verificado_en: []
+    - id: aws-bedrock
+      nombre: Amazon Bedrock
+      grupo: opcional
+      para_que: Acceso a modelos de frontera vía API gestionada de AWS con IAM
+      por_que: Alternativa a API directa de Anthropic; el banco puede preferir Bedrock por compliance
+      lineas: [T02]
+      evidencia: []
+      estado: opcion-preparada
+      decide_banco: "Bedrock, Azure OpenAI, API directa de Anthropic, modelo on-premise"
+      que_cambia: [requirements.txt (boto3 + bedrock adapter), app/core/config.py]
+      hecho_por: []
+      verificado_en: []
+    - id: terraform
+      nombre: Terraform
+      grupo: opcional
+      para_que: Infraestructura como código para el despliegue en AWS
+      por_que: Reproducibilidad; el banco puede auditar y modificar los módulos
+      lineas: [T05, T14]
+      evidencia: []
+      estado: opcion-preparada
+      decide_banco: "Terraform, CloudFormation, Pulumi, CDK, herramienta interna del banco"
+      que_cambia: [microservicio/esqueleto/terraform/]
+      hecho_por: []
+      verificado_en: []
+    - id: temporal-io
+      nombre: Temporal.io
+      grupo: opcional
+      para_que: Orquestación de workflows durables para procesos bancarios complejos
+      por_que: Opción para procesos que necesitan reintentos, compensaciones y auditoría
+      lineas: [T02]
+      evidencia: []
+      estado: opcion-preparada
+      decide_banco: "Temporal, Step Functions, Airflow, herramienta interna del banco"
+      que_cambia: [requirements.txt (temporalio), app/workflows/]
+      hecho_por: []
+      verificado_en: []
+    - id: opentelemetry
+      nombre: OpenTelemetry
+      grupo: opcional
+      para_que: Observabilidad distribuida (traces, métricas, logs) estándar CNCF
+      por_que: Instrumentación vendor-neutral; el banco elige el backend (Datadog, Grafana, etc.)
+      lineas: [T05]
+      evidencia: []
+      estado: opcion-preparada
+      decide_banco: "Backend: Datadog, Grafana Cloud, Elastic APM, Jaeger, herramienta interna"
+      que_cambia: [requirements.txt (opentelemetry-*), app/core/telemetry.py, microservicio/esqueleto/app/main.py]
+      hecho_por: []
+      verificado_en: []
   plantilla:
     - id: sqlite-registro
       nombre: Registro SQLite con raíles y triggers
@@ -628,6 +700,18 @@ stack:
       que_cambia: []
       hecho_por: [IA:05-arquitecto-sypnose:claude-opus-4-6]
       verificado_en: [23785]
+    - id: claude-agent-sdk
+      nombre: Claude Agent SDK (Claude Code)
+      grupo: practicas-ingenieria
+      para_que: "La fábrica SYPNOSE corre sobre Claude Code, construido sobre el Claude Agent SDK: agentes por chat con hooks, MCP y permisos"
+      por_que: Cada chat es un agente con cerco, brief, commit-msg y MCP (registro + KB)
+      lineas: [T06, T09]
+      evidencia: [caparazon/plantillas/mcp.json.jinja, caparazon/caparazon/post_tool_use.py, caparazon/caparazon/cerco.py]
+      estado: implementado
+      decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
+      que_cambia: []
+      hecho_por: [IA:08-caparazon:claude-sonnet-5, IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23750, 23747, 23453]
 roles_por_linea:
   T01: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T02: {rol: 04-agentes, modelo: claude-sonnet-5}
