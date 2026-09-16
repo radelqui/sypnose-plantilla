@@ -70,6 +70,14 @@ def main() -> None:
             e.setdefault("escrituras", []).append({"cuando": cuando, "herramienta": herramienta, "ruta": ruta_de(datos)})
         if not fallida and herramienta.endswith("send_message") and "ENTREGA" in json.dumps(datos, ensure_ascii=False):
             e["aviso_07"] = {"cuando": cuando, "herramienta": herramienta}
+        # B20: un merge/pull/rebase trae ficheros de otros commits; se añaden al baseline para no bloquear como escritura del agente
+        if herramienta in ("Bash", "PowerShell") and re.search(r"\bgit\b.*\b(merge|pull|rebase)\b", comando):
+            if actuales is not None:
+                e["sucios_inicio"] = sorted(set(e.get("sucios_inicio", [])) | actuales)
+            for ruta_x, actual_x in actuales_extra.items():
+                if actual_x is not None:
+                    inicio_x = e.setdefault("sucios_inicio_extra", {})
+                    inicio_x[ruta_x] = sorted((set(inicio_x[ruta_x]) if ruta_x in inicio_x else set()) | actual_x)
         if actuales is not None:
             for rel in sorted(actuales - set(e.get("sucios_inicio", []))):
                 if rel not in e.setdefault("cambios_vistos", []):
