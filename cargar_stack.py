@@ -164,11 +164,14 @@ def main():
             hecho_por_str = ", ".join(hecho_por_raw) if hecho_por_raw else ""
             verificado_en_str = ", ".join(str(v) for v in verificado_en_raw) if verificado_en_raw else ""
             decide_banco_str = entry.get("decide_banco", "")
+            decide_banco_pendiente = "false" if decide_banco_str.startswith("N/A") or not decide_banco_str else "true"
+            decide_banco_texto = "" if decide_banco_str.startswith("N/A") else decide_banco_str
             que_cambia_raw = entry.get("que_cambia", [])
             que_cambia_str = ", ".join(que_cambia_raw) if isinstance(que_cambia_raw, list) else str(que_cambia_raw or "")
             equipo_str = "oferta" if bloque == "solucion" else "plantilla"
             for campo, valor in [("para_que", para_que), ("por_que", por_que), ("grupo", grupo), ("estado", estado_final),
-                                 ("decide_banco", decide_banco_str), ("que_cambia", que_cambia_str), ("equipo", equipo_str),
+                                 ("decide_banco", decide_banco_texto), ("decide_banco_pendiente", decide_banco_pendiente),
+                                 ("que_cambia", que_cambia_str), ("equipo", equipo_str),
                                  ("hecho_por", hecho_por_str), ("verificado_en", verificado_en_str)]:
                 existing = conn.execute(
                     "SELECT id, valor FROM afirmacion WHERE nodo_id=? AND campo=? AND vigente=1",
