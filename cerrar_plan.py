@@ -76,9 +76,13 @@ def main() -> None:
     ts = ahora()
     conn.execute("BEGIN IMMEDIATE")
     try:
+        update_fields = {"estado": args.estado, "cerrado_en": ts}
+        if args.estado == "rechazado":
+            update_fields["motivo_rechazo"] = args.detalle
+        sets = ", ".join(f"{k}=?" for k in update_fields)
         conn.execute(
-            "UPDATE plan SET estado=?, cerrado_en=? WHERE id=?",
-            (args.estado, ts, args.plan),
+            f"UPDATE plan SET {sets} WHERE id=?",
+            (*update_fields.values(), args.plan),
         )
         accion = "plan_cerrado" if args.estado == "cerrado" else "plan_rechazado"
         conn.execute(
