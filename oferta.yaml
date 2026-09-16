@@ -32,11 +32,11 @@ lineas:
     bloqueos_esperados: [identidad]
   - id: T-04
     oferta: "Implement responsive and user-friendly interfaces"
-    plan: "Interfaz (deseable)"
-    clase: investigar
-    ears: "Cuando exista frontend, DEBE consumir /consultar por EventSource y mostrar tokens progresivamente."
-    comprobacion: "pendiente: sin frontend aún"
-    rol: 06-frontend
+    plan: "Interfaz React mínima en como-estoy-hecho"
+    clase: mantener
+    ears: "Cuando GET /como-estoy-hecho/ui responda 200, el body DEBE contener 'react' y 'viewport' (SPA mínima servida por el microservicio)."
+    comprobacion: "curl -sf http://localhost:8010/como-estoy-hecho/ui | grep -q react && curl -sf http://localhost:8010/como-estoy-hecho/ui | grep -q viewport && echo ok"
+    rol: 04-agentes
     skills: [frontend-ui-engineering]
     bloqueos_esperados: []
   - id: T-05
@@ -169,6 +169,8 @@ cubre_por_evidencia:
   T12: observado
   T13: observado
   T14: observado     # gh:run:34983669221 success (lead autoriza subida)
+  T04: propuesto     # como-estoy-hecho React UI (04-agentes, tarea 61)
+  T11: propuesto     # como-estoy-hecho React frontend (04-agentes, tarea 61)
   T15: observado
 # Líneas de proceso: no tienen archivos de código; su certeza viene de evidencias evento:/git:commit:.
 lineas_de_proceso: [T06, T09]
@@ -193,7 +195,7 @@ segunda_solucion:
   nombre: como-estoy-hecho
   repo: radelqui/como-estoy-hecho
   chat: 10-como-estoy-hecho
-  lineas: [T02, T12, T03, T13, T14, T15]
+  lineas: [T02, T03, T04, T11, T12, T13, T14, T15]
 # A5.5 (16-sep): Stack como dato del registro. Cada entrada verificada contra el repo real.
 # cargar_stack.py crea nodos tec:coforge:<id>, relaciones usa/cubre, afirmaciones.
 # decide_banco: qué puede tener el banco en su lugar. que_cambia: ficheros que se tocan.
@@ -485,14 +487,14 @@ roles_por_linea:
   T01: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T02: {rol: 04-agentes, modelo: claude-sonnet-5}
   T03: {rol: 02-backend-api, modelo: claude-sonnet-5}
-  T04: {rol: 06-frontend, modelo: claude-sonnet-5}
+  T04: {rol: 04-agentes, modelo: claude-sonnet-5}
   T05: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T06: {rol: 07-verificador, modelo: claude-opus-5}
   T07: {rol: 01-git-cicd, modelo: claude-sonnet-5}
   T08: {rol: 03-datos-rag, modelo: claude-sonnet-5}
   T09: {rol: 05-arquitecto-sypnose, modelo: claude-opus-5}
   T10: {rol: 02-backend-api, modelo: claude-sonnet-5}
-  T11: {rol: 06-frontend, modelo: claude-sonnet-5}
+  T11: {rol: 04-agentes, modelo: claude-sonnet-5}
   T12: {rol: 04-agentes, modelo: claude-sonnet-5}
   T13: {rol: 01-git-cicd, modelo: claude-sonnet-5}
   T14: {rol: 01-git-cicd, modelo: claude-sonnet-5}
