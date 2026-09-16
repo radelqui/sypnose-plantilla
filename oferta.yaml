@@ -194,6 +194,235 @@ segunda_solucion:
   repo: radelqui/como-estoy-hecho
   chat: 10-como-estoy-hecho
   lineas: [T02, T12, T03, T13, T14, T15]
+# A5.5 (16-sep): Stack como dato del registro. Cada entrada verificada contra el repo real.
+# cargar_stack.py crea nodos tec:coforge:<id>, relaciones usa/cubre, afirmaciones.
+stack:
+  solucion:
+    - id: python311
+      nombre: Python 3.11
+      grupo: lenguaje-backend
+      para_que: Lenguaje del microservicio, tipado estricto, async nativo
+      por_que: Requisito de la oferta (Python Developer), soporte LTS
+      lineas: [T01, T03, T05]
+      evidencia: [Dockerfile@FROM python:3.11-slim, .github/workflows/ci.yml@python-version]
+      estado: implementado
+    - id: fastapi
+      nombre: FastAPI + Uvicorn
+      grupo: lenguaje-backend
+      para_que: Framework HTTP async con OpenAPI automática
+      por_que: Rendimiento async para streams SSE, validación con Pydantic integrada
+      lineas: [T01, T03]
+      evidencia: [requirements.txt@fastapi, requirements.txt@uvicorn, Dockerfile@CMD uvicorn]
+      estado: implementado
+    - id: pydantic
+      nombre: Pydantic / pydantic-settings
+      grupo: lenguaje-backend
+      para_que: Validación de esquemas y configuración por entorno
+      por_que: Sin secretos en código; la config viene de env vars que inyecta K8s
+      lineas: [T01, T10]
+      evidencia: [requirements.txt@pydantic-settings]
+      estado: implementado
+    - id: sqlalchemy-asyncpg
+      nombre: SQLAlchemy 2 async + asyncpg
+      grupo: base-datos
+      para_que: ORM async con pool de conexiones para PostgreSQL
+      por_que: Dos URLs de conexión (app rw + ai readonly) por mínimo privilegio
+      lineas: [T01, T08]
+      evidencia: [requirements.txt@sqlalchemy, requirements.txt@asyncpg]
+      estado: implementado
+    - id: llamaindex
+      nombre: LlamaIndex (core + postgres + anthropic + openai)
+      grupo: ia-agentes
+      para_que: RAG con retriever híbrido (vectores + texto), FunctionTool, FunctionAgent
+      por_que: Abstracción de vectorstore + agente que evita SQL directo desde el LLM
+      lineas: [T02, T08, T12]
+      evidencia: [requirements.txt@llama-index-core, requirements.txt@llama-index-vector-stores-postgres, requirements.txt@llama-index-llms-anthropic, requirements.txt@llama-index-embeddings-openai]
+      estado: implementado
+    - id: anthropic-llm
+      nombre: Modelo de frontera (Anthropic API)
+      grupo: ia-agentes
+      para_que: LLM para razonamiento del agente bancario
+      por_que: API vía secreto K8s; el LLM nunca elige el cliente (identidad por cabecera)
+      lineas: [T02]
+      evidencia: [requirements.txt@llama-index-llms-anthropic, k8s/deployment.yaml@rag-agent-llm-secrets]
+      estado: implementado
+    - id: openai-embeddings
+      nombre: Modelo de embeddings (OpenAI API)
+      grupo: ia-agentes
+      para_que: Generación de vectores 1536d para búsqueda semántica
+      por_que: Índice HNSW sobre pgvector, dimensión fija declarada en init_db.sql
+      lineas: [T08]
+      evidencia: [requirements.txt@llama-index-embeddings-openai, scripts/init_db.sql@vector(1536)]
+      estado: implementado
+    - id: sse-starlette
+      nombre: SSE (Server-Sent Events)
+      grupo: lenguaje-backend
+      para_que: Streaming de tokens del agente al cliente en tiempo real
+      por_que: Alternativa ligera a WebSocket; navegador reconecta automáticamente
+      lineas: [T03]
+      evidencia: [requirements.txt@sse-starlette]
+      estado: implementado
+    - id: postgresql16
+      nombre: PostgreSQL 16 + pgvector
+      grupo: base-datos
+      para_que: Base de datos relacional con extensión vectorial para RAG híbrido
+      por_que: Misma BD para datos de negocio y vectores; sin servicio externo de embeddings
+      lineas: [T08, T01]
+      evidencia: [docker-compose.yml@pgvector/pgvector:pg16, scripts/init_db.sql@CREATE EXTENSION vector]
+      estado: implementado
+    - id: hnsw-gin
+      nombre: Índices HNSW + GIN/tsvector
+      grupo: base-datos
+      para_que: Búsqueda semántica (HNSW cosine) + texto exacto (GIN tsvector español)
+      por_que: Retriever híbrido combina ambos índices sin servicio externo
+      lineas: [T08]
+      evidencia: [scripts/init_db.sql@USING hnsw, scripts/init_db.sql@USING gin]
+      estado: implementado
+    - id: docker
+      nombre: Docker multi-stage slim + docker-compose
+      grupo: contenedores-despliegue
+      para_que: Imagen mínima non-root para producción; entorno local reproducible
+      por_que: Escaneo de imagen obligatorio; sin root ni paquetes innecesarios
+      lineas: [T05, T14]
+      evidencia: [Dockerfile@FROM python:3.11-slim AS builder, Dockerfile@USER appuser, docker-compose.yml@build]
+      estado: implementado
+    - id: kubernetes
+      nombre: Kubernetes (Deployment + Service + HPA)
+      grupo: contenedores-despliegue
+      para_que: Orquestación con escalado automático, probes y secretos
+      por_que: Deployment del banco; probes verifican health, HPA escala por CPU
+      lineas: [T05, T14]
+      evidencia: [k8s/deployment.yaml@Deployment, k8s/deployment.yaml@Service, k8s/deployment.yaml@HorizontalPodAutoscaler, k8s/deployment.yaml@startupProbe, k8s/secrets.example.yaml]
+      estado: implementado
+    - id: github-actions
+      nombre: GitHub Actions (CI/CD)
+      grupo: cicd-calidad
+      para_que: Pipeline test→build→scan→deploy con aprobación humana
+      por_que: Nada llega a producción sin lint, SAST, tests 85%, escaneo de imagen, aprobación
+      lineas: [T07, T14]
+      evidencia: [.github/workflows/ci.yml@test, .github/workflows/ci.yml@build-and-push, .github/workflows/ci.yml@deploy]
+      estado: implementado
+    - id: pytest
+      nombre: pytest + pytest-asyncio + httpx
+      grupo: cicd-calidad
+      para_que: Tests unitarios e integración async con cobertura mínima 85%
+      por_que: Regla del banco; cov-fail-under=85 en CI
+      lineas: [T01, T02, T03, T05]
+      evidencia: [requirements-dev.txt@pytest, requirements-dev.txt@pytest-asyncio, requirements-dev.txt@httpx, .github/workflows/ci.yml@pytest --cov]
+      estado: implementado
+    - id: ruff
+      nombre: ruff
+      grupo: cicd-calidad
+      para_que: Linter rápido (reemplaza flake8+isort+pyupgrade)
+      por_que: Lint obligatorio antes de merge; velocidad en CI
+      lineas: [T07, T14]
+      evidencia: [requirements-dev.txt@ruff, .github/workflows/ci.yml@ruff check]
+      estado: implementado
+    - id: bandit
+      nombre: bandit
+      grupo: cicd-calidad
+      para_que: SAST para Python (detecta inyecciones, eval, secretos)
+      por_que: Escaneo de seguridad obligatorio por regla del banco
+      lineas: [T10, T14]
+      evidencia: [requirements-dev.txt@bandit, .github/workflows/ci.yml@bandit -r app]
+      estado: implementado
+    - id: trivy
+      nombre: trivy
+      grupo: cicd-calidad
+      para_que: Escaneo de vulnerabilidades de imagen Docker (CRITICAL+HIGH)
+      por_que: Regla del banco; exit-code 1 bloquea merge si hay CVE graves
+      lineas: [T10, T14]
+      evidencia: [.github/workflows/ci.yml@aquasecurity/trivy-action]
+      estado: implementado
+    - id: react-vue
+      nombre: React/Vue con EventSource
+      grupo: opcional
+      para_que: Frontend SPA que consume SSE del agente
+      por_que: Deseable según oferta (T04/T11); no implementado en el POC
+      lineas: [T04, T11]
+      evidencia: []
+      estado: opcional-no-implementado
+  plantilla:
+    - id: sqlite-registro
+      nombre: Registro SQLite con raíles y triggers
+      grupo: lenguaje-backend
+      para_que: Base de datos de evidencia con reglas D4/D7/C8 como triggers SQL
+      por_que: Append-only con compuertas; quien ejecuta no juzga, solo humanos declaran
+      lineas: [T06, T09]
+      evidencia: [raiz.py, barrera.py@verificar_sin_delete]
+      estado: implementado
+    - id: barrera
+      nombre: Scripts con barrera (hash + backup)
+      grupo: cicd-calidad
+      para_que: Toda escritura al registro pasa verificación de hashes canónicos y backup
+      por_que: Ninguna escritura manual por SSH; scripts validan antes de escribir
+      lineas: [T09]
+      evidencia: [barrera.py@backup_registro, barrera.py@verificar_canonicos_registrados]
+      estado: implementado
+    - id: caparazon
+      nombre: Caparazón de hooks (11 módulos)
+      grupo: cicd-calidad
+      para_que: Cerco, auditoría git, brief, stop, commit-msg para cada sesión de chat
+      por_que: Los agentes solo escriben ficheros permitidos; merge se audita
+      lineas: [T07, T09]
+      evidencia: [caparazon/caparazon/cerco.py, caparazon/caparazon/post_tool_use.py, caparazon/instalar_caparazon.py]
+      estado: implementado
+    - id: mcp-sypnose
+      nombre: MCP sypnose (registro)
+      grupo: lenguaje-backend
+      para_que: Servidor MCP que expone lectura/escritura del registro a los chats
+      por_que: Los chats no hacen SSH directo; el MCP aplica permisos por rol
+      lineas: [T09]
+      evidencia: [caparazon/plantillas/mcp.json.jinja]
+      estado: implementado
+    - id: mcp-kb
+      nombre: MCP knowledge-hub (KB)
+      grupo: lenguaje-backend
+      para_que: Servidor MCP para la base de conocimiento del proyecto
+      por_que: Lecciones aprendidas, notificaciones inter-agente, búsqueda semántica
+      lineas: [T09]
+      evidencia: [caparazon/plantillas/mcp.json.jinja]
+      estado: implementado
+    - id: verificador
+      nombre: Verificador independiente + segundo verificador
+      grupo: cicd-calidad
+      para_que: 07-verificador verifica cada tarea; D7b impide auto-verificación por rol
+      por_que: Regla D7 (quien ejecuta no juzga) + D7b (mismo rol ≠ independiente)
+      lineas: [T06]
+      evidencia: [firmar.py, barrera.py@actor07_valido]
+      estado: implementado
+    - id: firmas
+      nombre: Firmas por delegación
+      grupo: cicd-calidad
+      para_que: 05-arquitecto firma tareas y líneas tras veredicto de 07
+      por_que: D4 (solo humanos declaran) delegado al arquitecto por orden permanente
+      lineas: [T09]
+      evidencia: [firmar.py@firma, firmar.py@tarea]
+      estado: implementado
+    - id: vista-publica
+      nombre: Vista pública (09-sypnose-vista)
+      grupo: opcional
+      para_que: Página web con el estado del proyecto para stakeholders
+      por_que: Transparencia; Carlos puede enviar el link al banco
+      lineas: [T15]
+      evidencia: [enlazar_solucion.py@plan_objetivo]
+      estado: implementado
+    - id: kb-lecciones
+      nombre: KB de lecciones aprendidas
+      grupo: opcional
+      para_que: Base de conocimiento con alertas, feedback y lecciones del proyecto
+      por_que: Mejora continua; cada arquitecto reporta §4.1
+      lineas: [T09]
+      evidencia: [caparazon/plantillas/mcp.json.jinja@knowledge-hub]
+      estado: implementado
+    - id: graphify
+      nombre: graphify (knowledge graph)
+      grupo: opcional
+      para_que: Transforma el registro en grafo de conocimiento navegable
+      por_que: Visualización de relaciones nodo→línea→plan→solución
+      lineas: [T15]
+      evidencia: [enlazar_solucion.py]
+      estado: implementado
 roles_por_linea:
   T01: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T02: {rol: 04-agentes, modelo: claude-sonnet-5}
