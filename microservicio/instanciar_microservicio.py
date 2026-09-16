@@ -130,6 +130,24 @@ def crear_dominio(destino: Path, dominio: str, titulo: str, nombre: str, puerto:
     )
     archivos.append(f"tests/{dominio}/test_{dominio}.py")
 
+    static_dir = app_domain / "static"
+    static_dir.mkdir(parents=True, exist_ok=True)
+    url_name = nombre  # nombre already uses dashes
+    index = static_dir / "index.html"
+    index.write_text(
+        f'<!doctype html>\n'
+        f'<html lang="es">\n'
+        f'<head><meta charset="utf-8"><title>{nombre} — {titulo}</title></head>\n'
+        f'<body>\n'
+        f'<div id="root"></div>\n'
+        f'<script>document.getElementById("root").textContent = '
+        f'"{titulo} UI — react placeholder";</script>\n'
+        f'</body>\n'
+        f'</html>\n',
+        encoding="utf-8",
+    )
+    archivos.append(f"app/{dominio}/static/index.html")
+
     return archivos
 
 
