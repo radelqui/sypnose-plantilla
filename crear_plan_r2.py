@@ -74,6 +74,25 @@ def main() -> None:
              f"PLAN-CS2-R2: corrección R2 (07b 24253), afecta {AFECTA}"),
         )
 
+        # --- Requisitos ---
+        conn.execute(
+            "INSERT INTO requisito (plan_id, ref, ears, comprobacion) VALUES (?, 'R1', ?, ?)",
+            (PLAN_ID,
+             "Cuando se ejecute python microservicio/comprobar_segundo.py sobre como-estoy-hecho con el esqueleto v1.2, "
+             "DEBE dar exit 0: .gitignore en el esqueleto, tags v1.1/v1.2 en ambos repos, diff fuera del dominio = 0.",
+             "python microservicio/comprobar_segundo.py"),
+        )
+        print("  [requisito] R1: esqueleto + tags + resync")
+
+        conn.execute(
+            "INSERT INTO requisito (plan_id, ref, ears, comprobacion) VALUES (?, 'R2', ?, ?)",
+            (PLAN_ID,
+             "Cuando se ejecute python -m pytest tests -q sobre como-estoy-hecho, "
+             "DEBE pasar: tests/test_integration.py movido a tests/como_estoy_hecho/test_integration.py.",
+             "python -m pytest tests -q"),
+        )
+        print("  [requisito] R2: mover test_integration.py")
+
         # --- Tarea 68: 05-arquitecto → .gitignore al esqueleto + tags ---
         conn.execute(
             "INSERT INTO tarea (plan_id, req_ref, titulo, agente, progreso) "
