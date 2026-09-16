@@ -38,4 +38,5 @@ def _autodiscover(application: FastAPI, app_dir: Path) -> None:
 
 app = FastAPI(title="{{SERVICE_NAME}}")
 app.include_router(health_router, prefix="/api/v1/health", tags=["health"])
+app.include_router(health_router, prefix="/health", tags=["health"], include_in_schema=False)
 _autodiscover(app, Path(__file__).resolve().parent)

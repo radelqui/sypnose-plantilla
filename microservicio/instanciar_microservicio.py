@@ -137,7 +137,7 @@ def crear_dominio(destino: Path, dominio: str, titulo: str, nombre: str, puerto:
     index.write_text(
         f'<!doctype html>\n'
         f'<html lang="es">\n'
-        f'<head><meta charset="utf-8"><title>{nombre} — {titulo}</title></head>\n'
+        f'<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{nombre} — {titulo}</title></head>\n'
         f'<body>\n'
         f'<div id="root"></div>\n'
         f'<script>document.getElementById("root").textContent = '
