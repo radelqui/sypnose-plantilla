@@ -108,7 +108,7 @@ def main() -> None:
             import re
             m = re.match(r"PLAN-CS-T(\d+)", plan_id)
             if m:
-                nodo_id = f"linea:coforge:T{m.group(1).lstrip('0') or '0'}"
+                nodo_id = f"linea:coforge:T{int(m.group(1)):02d}"
             else:
                 nodo_id = PLAN_TO_NODO.get(plan_id)
             if not nodo_id:
