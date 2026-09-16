@@ -97,7 +97,7 @@ def main():
 
             todas_existen = all(evidencia_existe(e, bloque) for e in evidencias) if evidencias else False
             certeza = "observado" if todas_existen else "propuesto"
-            estado_final = estado_yaml if todas_existen or estado_yaml == "opcional-no-implementado" else "declarado-sin-evidencia"
+            estado_final = estado_yaml if todas_existen or estado_yaml.startswith("opcion-") or estado_yaml == "opcional-no-implementado" else "declarado-sin-evidencia"
 
             if args.dry_run:
                 print(f"  [dry-run] {nodo_id}: {nombre} ({grupo}) certeza={certeza} estado={estado_final}")
