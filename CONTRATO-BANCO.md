@@ -84,12 +84,19 @@ lo que el banco puede decidir sustituir, y los ficheros/variables que cambian.
 | Trunk-based por chat (rama + trailers) | Cada chat en su rama con trailers Chat/Model/Plan/Tarea en commit-msg | N/A (práctica de ingeniería, no tecnología sustituible) | — | — |
 | Decisiones fechadas (ADR equivalente) | Decisiones numeradas y fechadas en PLAN.md y TRASPASO-* como ADR ligero | N/A (práctica de ingeniería, no tecnología sustituible) | — | — |
 | FinOps por evento (coste_turno_usd) | Coste por turno y por actor registrado en cada evento del registro | N/A (práctica de ingeniería, no tecnología sustituible) | — | — |
+| Claude Agent SDK (Claude Code) | La fábrica SYPNOSE corre sobre Claude Code, construido sobre el Claude Agent SDK: agentes por chat con hooks, MCP y permisos | N/A (artefacto de proceso de desarrollo, no entra en producción) | — | — |
 
 ## Opcional / futuro
 
 | Tecnología | Lo nuestro (POC) | Lo que decide el banco | Qué cambia | Variables |
 |------------|------------------|------------------------|------------|-----------|
-| *React/Vue con EventSource* (no impl.) | Frontend SPA que consume SSE del agente | Framework frontend: React, Angular, Vue, micro-frontend interno | nuevo directorio frontend/, package.json, .github/workflows/ci.yml (build frontend) | — |
+| React/Vue con EventSource | Frontend SPA que consume SSE del agente | Framework frontend: React, Angular, Vue, micro-frontend interno | nuevo directorio frontend/, package.json, .github/workflows/ci.yml (build frontend) | — |
+| Claude Agent SDK (producto) | Implementar el agente ¿Cómo estoy hecho? con el SDK de Anthropic en lugar de LlamaIndex | Bedrock vía SDK de AWS o SDK de Anthropic directo | app/como_estoy_hecho/agente.py (adaptador de motor) | — |
+| AWS EKS + IAM + Secrets Manager | Plataforma Kubernetes gestionada con integración IAM y secretos nativos | EKS, AKS, OpenShift, GKE, plataforma interna del banco | microservicio/esqueleto/terraform/ (módulos EKS, IAM, Secrets Manager) | — |
+| Amazon Bedrock | Acceso a modelos de frontera vía API gestionada de AWS con IAM | Bedrock, Azure OpenAI, API directa de Anthropic, modelo on-premise | requirements.txt (boto3 + bedrock adapter), app/core/config.py | — |
+| Terraform | Infraestructura como código para el despliegue en AWS | Terraform, CloudFormation, Pulumi, CDK, herramienta interna del banco | microservicio/esqueleto/terraform/ | — |
+| Temporal.io | Orquestación de workflows durables para procesos bancarios complejos | Temporal, Step Functions, Airflow, herramienta interna del banco | requirements.txt (temporalio), app/workflows/ | — |
+| OpenTelemetry | Observabilidad distribuida (traces, métricas, logs) estándar CNCF | Backend: Datadog, Grafana Cloud, Elastic APM, Jaeger, herramienta interna | requirements.txt (opentelemetry-*), app/core/telemetry.py, microservicio/esqueleto/app/main.py | — |
 | Vista pública (09-sypnose-vista) | Página web con el estado del proyecto para stakeholders | N/A (artefacto de proceso de desarrollo, no entra en producción) | — | — |
 | KB de lecciones aprendidas | Base de conocimiento con alertas, feedback y lecciones del proyecto | N/A (artefacto de proceso de desarrollo, no entra en producción) | — | — |
 | graphify (knowledge graph) | Transforma el registro en grafo de conocimiento navegable | N/A (artefacto de proceso de desarrollo, no entra en producción) | — | — |
