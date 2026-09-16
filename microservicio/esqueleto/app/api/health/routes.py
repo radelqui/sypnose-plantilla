@@ -6,6 +6,11 @@ from app.core.config import SERVICE_NAME
 router = APIRouter()
 
 
+@router.get("/")
+async def health():
+    return {"status": "alive", "service": SERVICE_NAME}
+
+
 @router.get("/live")
 async def liveness():
     return {"status": "alive", "service": SERVICE_NAME}
