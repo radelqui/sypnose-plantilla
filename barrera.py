@@ -127,6 +127,7 @@ def verificar_canonicos_registrados(conn) -> None:
 
 
 _RE_ACTOR07_ID = re.compile(r"^IA:07-verificador:[a-z0-9.-]+$")
+_RE_HUMANO_ID = re.compile(r"^H:[a-z0-9._-]+$", re.IGNORECASE)
 
 
 def actor07_valido(actor_id: str, conn, _seen: set | None = None) -> bool:
@@ -227,13 +228,33 @@ def verificar_d7_entrega(conn, tarea_id: int, actor_ejecutor: str) -> None:
 
 
 def verificar_d7_verificador(conn, verificador: str) -> None:
+    if _RE_HUMANO_ID.match(verificador):
+        if not conn.execute(
+            "SELECT 1 FROM actor WHERE id=? AND clase='humano'", (verificador,),
+        ).fetchone():
+            sys.exit(
+                f"[FALLO] D7 compuerta: verificador humano ({verificador}) no registrado en tabla actor"
+            )
+        return
     if not _RE_ACTOR07_ID.match(verificador):
         sys.exit(
-            f"[FALLO] D7 compuerta: verificador ({verificador}) no es IA:07-verificador:*"
+            f"[FALLO] D7 compuerta: verificador ({verificador}) no es IA:07-verificador:* ni H:*"
         )
     if not actor07_valido(verificador, conn):
         sys.exit(
             f"[FALLO] D7 compuerta: verificador ({verificador}) no está ratificado"
+        )
+
+
+def verificar_d7_auto_verificacion(conn, tarea_id: int, verificador: str) -> None:
+    row = conn.execute("SELECT agente FROM tarea WHERE id=?", (tarea_id,)).fetchone()
+    if not row:
+        sys.exit(f"[FALLO] tarea {tarea_id} no existe")
+    agente = row[0]
+    if agente and agente.startswith("IA:07-verificador:") and verificador.startswith("IA:07-verificador:"):
+        sys.exit(
+            f"[FALLO] D7b compuerta: agente ({agente}) y verificador ({verificador}) son el mismo rol "
+            f"(07-verificador). Tareas de 07 las verifica un humano (H:*)."
         )
 
 
