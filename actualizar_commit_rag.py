@@ -26,14 +26,18 @@ def ahora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def get_origin_main_sha(repo: Path) -> str:
-    r = subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", "origin/main"],
-        capture_output=True, text=True, timeout=10,
-    )
-    if r.returncode != 0:
-        sys.exit(f"[FALLO] no se pudo resolver origin/main en {repo}")
-    return r.stdout.strip()
+def get_remote_main_sha(repo: Path) -> str:
+    for ref in ("origin/main", "github/main"):
+        r = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", ref],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            sha = r.stdout.strip()
+            if sha != OLD_SHA:
+                print(f"[remote] usando {ref} = {sha[:12]}")
+                return sha
+    sys.exit(f"[FALLO] no se encontró un remote/main más nuevo que {OLD_SHA[:12]} en {repo}")
 
 
 def main() -> None:
@@ -47,7 +51,7 @@ def main() -> None:
     if not RAG_REPO.exists():
         sys.exit(f"[FALLO] repo rag-banking-agent no encontrado en {RAG_REPO}")
 
-    new_sha = get_origin_main_sha(RAG_REPO)
+    new_sha = get_remote_main_sha(RAG_REPO)
     print(f"[rag-banking-agent] origin/main = {new_sha[:12]}")
     print(f"[old] = {OLD_SHA[:12]}")
 
