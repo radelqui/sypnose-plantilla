@@ -23,6 +23,7 @@ FUENTE = "plantilla/cargar_portada_vista.py"
 
 RAG_SOL = "sol:coforge:rag-banking-agent"
 PLANTILLA_SOL = "sol:coforge:sypnose-plantilla"
+CEH_SOL = "sol:coforge:como-estoy-hecho"
 
 POR_QUE_T01_COMPLETO = (
     "Mantener un backend Python en producción significa, ante todo, que el servicio "
@@ -156,7 +157,10 @@ def main() -> None:
         # --- 3. Crear portada_recorrido ---
         recorrido_ok = 0
         for paso, texto in RECORRIDO.items():
-            campo = f"portada_recorrido_{paso}"
+            campo_nuevo = f"portada_recorrido.{paso}"
+            campo_viejo = f"portada_recorrido_{paso}"
+            retirar_vigente(conn, RAG_SOL, campo_viejo)
+            campo = campo_nuevo
             res = upsert(conn, RAG_SOL, campo, texto, ts)
             if res != "skip":
                 recorrido_ok += 1
@@ -168,7 +172,8 @@ def main() -> None:
 
         # --- 4. Crear contrato_banco ---
         contrato_val = f"CONTRATO-BANCO.md@{CONTRATO_SHA}"
-        res = upsert(conn, PLANTILLA_SOL, "contrato_banco", contrato_val, ts)
+        retirar_vigente(conn, PLANTILLA_SOL, "contrato_banco")
+        res = upsert(conn, RAG_SOL, "contrato_banco", contrato_val, ts)
         if res != "skip":
             cambios.append("contrato_banco")
             print(f"  [contrato_banco] {res}: {contrato_val}")
