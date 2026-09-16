@@ -170,13 +170,20 @@ def main():
             for campo, valor in [("para_que", para_que), ("por_que", por_que), ("grupo", grupo), ("estado", estado_final),
                                  ("decide_banco", decide_banco_str), ("que_cambia", que_cambia_str), ("equipo", equipo_str),
                                  ("hecho_por", hecho_por_str), ("verificado_en", verificado_en_str)]:
-                rc = conn.execute(
-                    "INSERT OR IGNORE INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando, evidencia, vigente) "
+                existing = conn.execute(
+                    "SELECT id, valor FROM afirmacion WHERE nodo_id=? AND campo=? AND vigente=1",
+                    (nodo_id, campo),
+                ).fetchone()
+                if existing and existing[1] == valor:
+                    continue
+                if existing:
+                    conn.execute("UPDATE afirmacion SET vigente=0 WHERE id=?", (existing[0],))
+                conn.execute(
+                    "INSERT INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando, evidencia, vigente) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
                     (nodo_id, campo, valor, certeza, FUENTE, args.actor, ahora(), ev_texto),
-                ).rowcount
-                if rc == 1:
-                    afirmaciones += 1
+                )
+                afirmaciones += 1
 
             print(f"  {nodo_id}: {nombre} [{grupo}] certeza={certeza} estado={estado_final}")
 
@@ -186,14 +193,21 @@ def main():
     for capa, texto in portada.items():
         campo = f"portada_{capa}"
         if not args.dry_run:
-            rc = conn.execute(
-                "INSERT OR IGNORE INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando, evidencia, vigente) "
+            existing = conn.execute(
+                "SELECT id, valor FROM afirmacion WHERE nodo_id=? AND campo=? AND vigente=1",
+                (SOL_ID, campo),
+            ).fetchone()
+            if existing and existing[1] == texto:
+                continue
+            if existing:
+                conn.execute("UPDATE afirmacion SET vigente=0 WHERE id=?", (existing[0],))
+            conn.execute(
+                "INSERT INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando, evidencia, vigente) "
                 "VALUES (?, ?, ?, 'observado', ?, ?, ?, 'oferta.yaml#portada', 1)",
                 (SOL_ID, campo, texto, FUENTE, args.actor, ahora()),
-            ).rowcount
-            if rc == 1:
-                portada_count += 1
-                afirmaciones += 1
+            )
+            portada_count += 1
+            afirmaciones += 1
         else:
             print(f"  [dry-run] portada {campo}: {texto[:60]}...")
             portada_count += 1
