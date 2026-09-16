@@ -18,6 +18,11 @@ from barrera import PLANTILLA_DIR, backup_registro, verificar_canonicos_registra
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-4-6"
 TRANSCRIPTS_DIR = PLANTILLA_DIR / "transcripts"
 
+PLAN_TO_NODO = {
+    "PLAN-CS-M2": "sol:coforge:rag-banking-agent",
+    "PLAN-CS2-M": "sol:coforge:como-estoy-hecho",
+}
+
 AGENT_TO_CHAT = {
     "01-git-cicd": "01-git-cicd",
     "02-backend-api": "02-backend-api",
@@ -100,6 +105,19 @@ def main() -> None:
     try:
         ts = ahora()
         for plan_id in closed_plans:
+            import re
+            m = re.match(r"PLAN-CS-T(\d+)", plan_id)
+            if m:
+                nodo_id = f"linea:coforge:T{m.group(1).lstrip('0') or '0'}"
+            else:
+                nodo_id = PLAN_TO_NODO.get(plan_id)
+            if not nodo_id:
+                print(f"  [skip] {plan_id}: sin nodo mapeado")
+                continue
+            if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (nodo_id,)).fetchone():
+                print(f"  [skip] {plan_id}: nodo {nodo_id} no existe")
+                continue
+
             chats = plan_chats.get(plan_id, set())
             if not chats:
                 print(f"  [skip] {plan_id}: sin chat con transcript")
@@ -108,18 +126,18 @@ def main() -> None:
                 for fname in chat_files[chat]:
                     ruta = f"transcripts/{chat}/{fname}"
                     existing = conn.execute(
-                        "SELECT 1 FROM afirmacion WHERE nodo_id=? AND campo='transcript' AND valor=?",
-                        (plan_id, ruta),
+                        "SELECT 1 FROM afirmacion WHERE nodo_id=? AND campo=? AND valor=?",
+                        (nodo_id, f"transcript:{plan_id}", ruta),
                     ).fetchone()
                     if existing:
-                        existian.append(f"{plan_id}: {ruta}")
+                        existian.append(f"{nodo_id} ({plan_id}): {ruta}")
                         continue
                     conn.execute(
                         "INSERT INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando) "
-                        "VALUES (?, 'transcript', ?, 'observado', ?, ?, ?)",
-                        (plan_id, ruta, "plantilla/cargar_transcripts.py", ACTOR, ts),
+                        "VALUES (?, ?, ?, 'observado', ?, ?, ?)",
+                        (nodo_id, f"transcript:{plan_id}", ruta, "plantilla/cargar_transcripts.py", ACTOR, ts),
                     )
-                    altas.append(f"{plan_id}: {ruta}")
+                    altas.append(f"{nodo_id} ({plan_id}): {ruta}")
 
         if altas:
             conn.execute(
