@@ -49,7 +49,16 @@ def main() -> None:
     if estado != "abierto":
         sys.exit(f"[FALLO] {pid} estado={estado}, esperado abierto")
 
+    conflicto = conn.execute(
+        "SELECT id, estado FROM plan WHERE worktree=? AND id!=?",
+        (args.worktree, args.plan),
+    ).fetchone()
+    if conflicto and conflicto[1] not in ("cerrado", "rechazado"):
+        sys.exit(f"[FALLO] el worktree {args.worktree!r} lo tiene {conflicto[0]} ({conflicto[1]})")
+
     print(f"[corregir] {pid}: worktree {wt_actual!r} → {args.worktree!r}")
+    if conflicto:
+        print(f"[liberar] {conflicto[0]} ({conflicto[1]}): worktree → NULL")
     print(f"[motivo] {args.motivo}")
 
     if args.dry_run:
@@ -63,6 +72,15 @@ def main() -> None:
     ts = ahora()
     conn.execute("BEGIN IMMEDIATE")
     try:
+        if conflicto:
+            conn.execute(
+                "UPDATE plan SET worktree=NULL WHERE id=?", (conflicto[0],),
+            )
+            conn.execute(
+                "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+                (ts, ACTOR, "plan_corregido", conflicto[0],
+                 f"worktree liberado (plan {conflicto[1]}): cedido a {args.plan}"),
+            )
         conn.execute(
             "UPDATE plan SET worktree=? WHERE id=?",
             (args.worktree, args.plan),
