@@ -218,6 +218,8 @@ stack:
       estado: implementado
       decide_banco: Versión de Python aprobada (3.11+ preferido por async y typing)
       que_cambia: [Dockerfile (FROM), .github/workflows/ci.yml (python-version), requirements*.txt]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5]
+      verificado_en: [22990, 22988]
     - id: fastapi
       nombre: FastAPI + Uvicorn
       grupo: lenguaje-backend
@@ -228,6 +230,8 @@ stack:
       estado: implementado
       decide_banco: "Framework HTTP: Flask, Django REST, framework interno del banco"
       que_cambia: [requirements.txt, app/main.py (app factory), Dockerfile (CMD)]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5]
+      verificado_en: [22988, 23418]
     - id: pydantic
       nombre: Pydantic / pydantic-settings
       grupo: lenguaje-backend
@@ -238,6 +242,8 @@ stack:
       estado: implementado
       decide_banco: "Validación: marshmallow, attrs, o schema del framework elegido"
       que_cambia: [requirements.txt, app/core/config.py, app/api/schemas.py]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5]
+      verificado_en: [22988, 22992]
     - id: sqlalchemy-asyncpg
       nombre: SQLAlchemy 2 async + asyncpg
       grupo: base-datos
@@ -248,6 +254,8 @@ stack:
       estado: implementado
       decide_banco: "ORM/driver: psycopg2 sync, Django ORM, driver propietario del banco"
       que_cambia: [requirements.txt, app/core/db.py, docker-compose.yml (env vars)]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5, IA:03-datos-rag:claude-sonnet-5]
+      verificado_en: [23418, 23253]
     - id: llamaindex
       nombre: LlamaIndex (core + postgres + anthropic + openai)
       grupo: ia-agentes
@@ -258,6 +266,8 @@ stack:
       estado: implementado
       decide_banco: "Framework RAG: LangChain, Haystack, SDK directo del LLM, framework interno"
       que_cambia: [requirements.txt, app/rag/engine.py, app/agent/tools.py, scripts/ingest.py]
+      hecho_por: [IA:04-agentes:claude-sonnet-5, IA:03-datos-rag:claude-sonnet-5]
+      verificado_en: [23418, 23253, 23297]
     - id: anthropic-llm
       nombre: Modelo de frontera (Anthropic API)
       grupo: ia-agentes
@@ -268,6 +278,8 @@ stack:
       estado: implementado
       decide_banco: "LLM provider: Amazon Bedrock, Azure OpenAI, pasarela interna, modelo on-premise"
       que_cambia: [requirements.txt (llm adapter), app/core/config.py (ANTHROPIC_API_KEY → var nueva), k8s/deployment.yaml (secretos)]
+      hecho_por: [IA:04-agentes:claude-sonnet-5]
+      verificado_en: [23418]
     - id: openai-embeddings
       nombre: Modelo de embeddings (OpenAI API)
       grupo: ia-agentes
@@ -278,6 +290,8 @@ stack:
       estado: implementado
       decide_banco: "Embeddings provider: Azure OpenAI, Bedrock Titan, Cohere, modelo local"
       que_cambia: [requirements.txt (embeddings adapter), app/core/config.py (OPENAI_API_KEY → var nueva), scripts/init_db.sql (dimensión vector)]
+      hecho_por: [IA:03-datos-rag:claude-sonnet-5]
+      verificado_en: [23253]
     - id: sse-starlette
       nombre: SSE (Server-Sent Events)
       grupo: lenguaje-backend
@@ -288,6 +302,8 @@ stack:
       estado: implementado
       decide_banco: "Streaming: WebSocket, gRPC streaming, polling largo"
       que_cambia: [requirements.txt, app/api/routes.py (streaming handler)]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5]
+      verificado_en: [22988]
     - id: postgresql16
       nombre: PostgreSQL 16 + pgvector
       grupo: base-datos
@@ -298,6 +314,8 @@ stack:
       estado: implementado
       decide_banco: "PostgreSQL del banco con pgvector aprobado; versión y extensiones según DBA"
       que_cambia: [docker-compose.yml (imagen), scripts/init_db.sql (extensión y roles), app/core/config.py (URLs)]
+      hecho_por: [IA:03-datos-rag:claude-sonnet-5, IA:02-backend-api:claude-sonnet-5]
+      verificado_en: [23253, 23418]
     - id: hnsw-gin
       nombre: Índices HNSW + GIN/tsvector
       grupo: base-datos
@@ -308,6 +326,8 @@ stack:
       estado: implementado
       decide_banco: "Parámetros HNSW (m, ef_construction), idioma de tsvector, política de reindexado"
       que_cambia: [scripts/init_db.sql (parámetros de índice y configuración de idioma)]
+      hecho_por: [IA:03-datos-rag:claude-sonnet-5]
+      verificado_en: [23253]
     - id: docker
       nombre: Docker multi-stage slim + docker-compose
       grupo: contenedores-despliegue
@@ -318,6 +338,8 @@ stack:
       estado: implementado
       decide_banco: "Registry: Harbor, ACR, ECR, GHCR; imagen base aprobada por seguridad"
       que_cambia: [Dockerfile (FROM base image), .github/workflows/ci.yml (registry login), docker-compose.yml]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5, IA:01-git-cicd:claude-sonnet-5]
+      verificado_en: [22990, 23416]
     - id: kubernetes
       nombre: Kubernetes (Deployment + Service + HPA)
       grupo: contenedores-despliegue
@@ -328,6 +350,8 @@ stack:
       estado: implementado
       decide_banco: "Plataforma: EKS, AKS, OpenShift, GKE; políticas de red, RBAC y Secrets→Vault"
       que_cambia: [k8s/deployment.yaml (apiVersion, securityContext, registry, secretRef→Vault), k8s/secrets.example.yaml]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5, IA:01-git-cicd:claude-sonnet-5]
+      verificado_en: [22990, 23416]
     - id: github-actions
       nombre: GitHub Actions (CI/CD)
       grupo: cicd-calidad
@@ -338,6 +362,8 @@ stack:
       estado: implementado
       decide_banco: "CI/CD: Jenkins, Azure DevOps, GitLab CI, Tekton"
       que_cambia: [.github/workflows/ci.yml → pipeline equivalente en la herramienta elegida]
+      hecho_por: [IA:01-git-cicd:claude-sonnet-5]
+      verificado_en: [23295, 23416]
     - id: pytest
       nombre: pytest + pytest-asyncio + httpx
       grupo: cicd-calidad
@@ -348,6 +374,8 @@ stack:
       estado: implementado
       decide_banco: "Framework de tests compatible; umbral de cobertura según política"
       que_cambia: [requirements-dev.txt, .github/workflows/ci.yml (comando test)]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5, IA:04-agentes:claude-sonnet-5]
+      verificado_en: [22988, 23418, 22990, 23297]
     - id: ruff
       nombre: ruff
       grupo: cicd-calidad
@@ -358,6 +386,8 @@ stack:
       estado: implementado
       decide_banco: "Linter: flake8, pylint, SonarQube policy engine"
       que_cambia: [requirements-dev.txt, .github/workflows/ci.yml (lint step), pyproject.toml]
+      hecho_por: [IA:01-git-cicd:claude-sonnet-5]
+      verificado_en: [23295, 23416]
     - id: bandit
       nombre: bandit
       grupo: cicd-calidad
@@ -368,6 +398,8 @@ stack:
       estado: implementado
       decide_banco: "SAST: SonarQube, Snyk Code, Checkmarx, Fortify"
       que_cambia: [requirements-dev.txt, .github/workflows/ci.yml (SAST step)]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5, IA:01-git-cicd:claude-sonnet-5]
+      verificado_en: [22992, 23416]
     - id: trivy
       nombre: trivy
       grupo: cicd-calidad
@@ -378,6 +410,8 @@ stack:
       estado: implementado
       decide_banco: "Escaneo de imagen: Snyk Container, Prisma Cloud, Aqua, Grype"
       que_cambia: [.github/workflows/ci.yml (scan step, action/plugin)]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5, IA:01-git-cicd:claude-sonnet-5]
+      verificado_en: [22992, 23416]
     - id: react-vue
       nombre: React/Vue con EventSource
       grupo: opcional
@@ -388,6 +422,8 @@ stack:
       estado: opcional-no-implementado
       decide_banco: "Framework frontend: React, Angular, Vue, micro-frontend interno"
       que_cambia: [nuevo directorio frontend/, package.json, .github/workflows/ci.yml (build frontend)]
+      hecho_por: []
+      verificado_en: []
   plantilla:
     - id: sqlite-registro
       nombre: Registro SQLite con raíles y triggers
@@ -399,6 +435,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-sonnet-5, IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23455, 23454]
     - id: barrera
       nombre: Scripts con barrera (hash + backup)
       grupo: cicd-calidad
@@ -409,6 +447,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-sonnet-5, IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23455, 23454]
     - id: caparazon
       nombre: Caparazón de hooks (11 módulos)
       grupo: cicd-calidad
@@ -419,6 +459,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
+      hecho_por: [IA:08-caparazon:claude-sonnet-5]
+      verificado_en: [23750, 23747, 23453]
     - id: mcp-sypnose
       nombre: MCP sypnose (registro)
       grupo: lenguaje-backend
@@ -429,6 +471,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-sonnet-5]
+      verificado_en: []
     - id: mcp-kb
       nombre: MCP knowledge-hub (KB)
       grupo: lenguaje-backend
@@ -439,6 +483,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-sonnet-5]
+      verificado_en: []
     - id: verificador
       nombre: Verificador independiente + segundo verificador
       grupo: cicd-calidad
@@ -449,6 +495,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
+      hecho_por: [IA:07-verificador:claude-opus-5, IA:07-verificador:claude-opus-4-6]
+      verificado_en: [23422, 23372, 23430]
     - id: firmas
       nombre: Firmas por delegación
       grupo: cicd-calidad
@@ -459,6 +507,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23430]
     - id: vista-publica
       nombre: Vista pública (09-sypnose-vista)
       grupo: opcional
@@ -469,6 +519,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
+      hecho_por: [IA:09-sypnose-vista:claude-sonnet-5]
+      verificado_en: [23455, 23357]
     - id: kb-lecciones
       nombre: KB de lecciones aprendidas
       grupo: opcional
@@ -479,6 +531,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-sonnet-5]
+      verificado_en: []
     - id: graphify
       nombre: graphify (knowledge graph)
       grupo: opcional
@@ -489,6 +543,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23455]
     - id: sdd-ears
       nombre: Spec-Driven Development (EARS)
       grupo: practicas-ingenieria
@@ -499,6 +555,8 @@ stack:
       estado: implementado
       decide_banco: "Formato de spec: OpenSpec, Spec Kit, Gherkin, formato interno del banco"
       que_cambia: [specs/Txx/spec.md (formato), comprobar_esqueleto.py (parser)]
+      hecho_por: [IA:05-arquitecto-sypnose:claude-sonnet-5, IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23785]
     - id: tdd-puerta
       nombre: TDD con puerta de cobertura ≥85%
       grupo: practicas-ingenieria
@@ -509,6 +567,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
       que_cambia: []
+      hecho_por: [IA:01-git-cicd:claude-sonnet-5]
+      verificado_en: [23295]
     - id: revision-independiente
       nombre: Revisión independiente (D7)
       grupo: practicas-ingenieria
@@ -519,6 +579,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
       que_cambia: []
+      hecho_por: [IA:07-verificador:claude-opus-4-6, IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23422, 23372, 23428]
     - id: trunk-por-chat
       nombre: Trunk-based por chat (rama + trailers)
       grupo: practicas-ingenieria
@@ -529,6 +591,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
       que_cambia: []
+      hecho_por: [IA:08-caparazon:claude-sonnet-5]
+      verificado_en: [23750, 23747]
     - id: decisiones-fechadas
       nombre: Decisiones fechadas (ADR equivalente)
       grupo: practicas-ingenieria
@@ -539,6 +603,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
       que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-sonnet-5]
+      verificado_en: [23785]
     - id: finops-por-evento
       nombre: FinOps por evento (coste_turno_usd)
       grupo: practicas-ingenieria
@@ -549,6 +615,8 @@ stack:
       estado: implementado
       decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
       que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23785]
 roles_por_linea:
   T01: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T02: {rol: 04-agentes, modelo: claude-sonnet-5}

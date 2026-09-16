@@ -157,9 +157,13 @@ def main():
                 if rc == 1:
                     relaciones += 1
 
-            # Afirmaciones: para_que, por_que, grupo, estado
+            # Afirmaciones: para_que, por_que, grupo, estado, hecho_por, verificado_en
             ev_texto = ", ".join(evidencias) if evidencias else None
-            for campo, valor in [("para_que", para_que), ("por_que", por_que), ("grupo", grupo), ("estado", estado_final)]:
+            hecho_por_raw = entry.get("hecho_por", [])
+            verificado_en_raw = entry.get("verificado_en", [])
+            hecho_por_str = ", ".join(hecho_por_raw) if hecho_por_raw else ""
+            verificado_en_str = ", ".join(str(v) for v in verificado_en_raw) if verificado_en_raw else ""
+            for campo, valor in [("para_que", para_que), ("por_que", por_que), ("grupo", grupo), ("estado", estado_final), ("hecho_por", hecho_por_str), ("verificado_en", verificado_en_str)]:
                 rc = conn.execute(
                     "INSERT OR IGNORE INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando, evidencia, vigente) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
