@@ -31,6 +31,10 @@ OFERTA_TITULO = "Python Developer + IA · Coforge / Santander"
 REPO_URL = "https://github.com/radelqui/rag-banking-agent"
 OFERTA_YAML = PLANTILLA_DIR / "oferta.yaml"
 
+SOL2_ID = "sol:coforge:como-estoy-hecho"
+SOL2_NOMBRE = "como-estoy-hecho (Coforge/Santander)"
+SOL2_REPO_URL = "https://github.com/radelqui/como-estoy-hecho"
+
 
 def ahora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -52,6 +56,7 @@ def evento(conn, actor, accion, detalle, nodo_id=None, plan_id=None):
 
 
 REPO_RAG = Path(__file__).resolve().parent.parent / "rag-banking-agent"
+REPO_CEH = Path(__file__).resolve().parent.parent / "como-estoy-hecho"
 REPO_SLUG = "vmi3211028:rag-banking-agent"
 AMBITO_PROY = "vmi3211028"
 
@@ -199,7 +204,8 @@ def cargar_oferta_yaml():
             sys.exit(f"[FALLO] certeza inválida '{certeza}' para línea {lid}")
     archivos = doc.get("archivos_por_linea", {})
     lineas_proceso = set(doc.get("lineas_de_proceso", []))
-    return plan_por_linea, cubre_map, archivos, lineas_proceso
+    segunda = doc.get("segunda_solucion", {})
+    return plan_por_linea, cubre_map, archivos, lineas_proceso, segunda
 
 
 # ── Certeza calculation from sources ──
@@ -213,6 +219,7 @@ RE_PLAN_REF = re.compile(r"^plan:(.+)$")
 RE_GIT_REPO = re.compile(r"^git:(.+)$")
 RE_EVENTO = re.compile(r"^evento:(\d+)$")
 RE_GIT_COMMIT = re.compile(r"^git:commit:([0-9a-f]{6,40})$")
+RE_CEH_FILE_SHA = re.compile(r"^como-estoy-hecho:(.+)@([0-9a-f]{6,40})$")
 GH_REPO = "radelqui/rag-banking-agent"
 PROYECTO_DIR = PLANTILLA_DIR.parent
 
@@ -365,6 +372,16 @@ def validar_fuente(fuente: str, conn=None, plan_id: str | None = None) -> tuple[
             return True, "ok"
         return False, f"commit {sha} not found"
 
+    # como-estoy-hecho:path@sha → file must exist in como-estoy-hecho repo
+    m = RE_CEH_FILE_SHA.match(fuente)
+    if m:
+        path, sha = m.groups()
+        if REPO_CEH.exists() and _git_object_exists(REPO_CEH, f"{sha}:{path}"):
+            return True, "ok"
+        if not REPO_CEH.exists():
+            return False, f"repo como-estoy-hecho not found at {REPO_CEH}"
+        return False, f"file {path} not found at {sha} in como-estoy-hecho"
+
     # file#section@sha → file and heading must exist
     m = RE_SECTION.match(fuente)
     if m:
@@ -498,7 +515,7 @@ def main() -> None:
     rag_sha = r.stdout.strip()
     print(f"[rag-sha] {rag_sha[:12]}")
 
-    plan_por_linea, cubre_map, archivos_por_linea, lineas_proceso = cargar_oferta_yaml()
+    plan_por_linea, cubre_map, archivos_por_linea, lineas_proceso, segunda_sol = cargar_oferta_yaml()
     cubre_set = set(cubre_map.keys())
     print(f"[oferta.yaml] plan_por_linea: {len(plan_por_linea)} entradas, cubre_por_evidencia: {len(cubre_set)} líneas")
 
@@ -847,6 +864,70 @@ def main() -> None:
             )
             altas.append(f"commit {sha[:12]} en {nodo_id}")
 
+        # ── Segunda solución (como-estoy-hecho) ──
+        if segunda_sol and segunda_sol.get("nombre"):
+            sol2_nombre = segunda_sol["nombre"]
+            sol2_lineas = segunda_sol.get("lineas", [])
+            sol2_archivos = segunda_sol.get("archivos_por_linea", {})
+            print(f"\n[segunda solución] {sol2_nombre}: {len(sol2_lineas)} líneas")
+
+            insertar_si_nuevo(
+                conn,
+                "INSERT OR IGNORE INTO nodo (id, tipo, nombre, ambito, vitalidad, descubierto_en, descubierto_por) "
+                "VALUES (?, 'solucion', ?, 'coforge-santander', 'activo', ?, 'humano')",
+                (SOL2_ID, SOL2_NOMBRE, ahora()),
+                f"nodo {SOL2_ID}", altas, existian,
+            )
+            if SOL2_ID in [a.split()[-1] for a in altas if "nodo" in a]:
+                evento(conn, args.actor, "alta_nodo", f"nodo solución {SOL2_ID}", nodo_id=SOL2_ID)
+
+            # cubre: segunda solución → líneas con certeza calculada
+            sol2_cubre_count = 0
+            for lid in sol2_lineas:
+                linea_id = f"linea:coforge:{lid}"
+                if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (linea_id,)).fetchone():
+                    avisos.append(f"sol2 cubre: {linea_id} no existe")
+                    continue
+                certeza = cubre_map.get(lid, "propuesto")
+
+                existente = conn.execute(
+                    "SELECT certeza FROM relacion WHERE origen=? AND destino=? AND tipo='cubre'",
+                    (SOL2_ID, linea_id),
+                ).fetchone()
+                if existente:
+                    if existente[0] != certeza:
+                        conn.execute(
+                            "UPDATE relacion SET certeza=? WHERE origen=? AND destino=? AND tipo='cubre'",
+                            (certeza, SOL2_ID, linea_id),
+                        )
+                        evento(conn, args.actor, "certeza_actualizada",
+                               f"cubre {SOL2_ID}→{linea_id}: {existente[0]} → {certeza}",
+                               nodo_id=SOL2_ID)
+                        altas.append(f"certeza cubre {SOL2_ID}→{linea_id}: {existente[0]} → {certeza}")
+                    else:
+                        existian.append(f"cubre {SOL2_ID} → {linea_id}")
+                else:
+                    conn.execute(
+                        "INSERT INTO relacion (origen, destino, tipo, certeza, fuente, visto_en) "
+                        "VALUES (?, ?, 'cubre', ?, ?, ?)",
+                        (SOL2_ID, linea_id, certeza, FUENTE, ahora()),
+                    )
+                    evento(conn, args.actor, "relacion_cubre",
+                           f"{SOL2_ID} cubre {linea_id} (certeza={certeza})", nodo_id=SOL2_ID)
+                    altas.append(f"cubre {SOL2_ID} → {linea_id} [{certeza}]")
+                    sol2_cubre_count += 1
+            if sol2_cubre_count:
+                print(f"  [sol2 cubre] {sol2_cubre_count} relaciones cubre creadas")
+
+            if afirmar(conn, args.actor, SOL2_ID, "tecnico:puerto", "8010"):
+                altas.append("afirmacion tecnico:puerto=8010 (sol2)")
+            if afirmar(conn, args.actor, SOL2_ID, "tecnico:repo_url", SOL2_REPO_URL):
+                altas.append(f"afirmacion tecnico:repo_url={SOL2_REPO_URL}")
+            if afirmar(conn, args.actor, SOL2_ID, "tecnico:framework", "FastAPI (esqueleto SYPNOSE)"):
+                altas.append("afirmacion tecnico:framework (sol2)")
+            if afirmar(conn, args.actor, SOL2_ID, "oferta_titulo", OFERTA_TITULO):
+                altas.append(f"afirmacion oferta_titulo en {SOL2_ID}")
+
         conn.execute("ROLLBACK" if args.dry_run else "COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -865,8 +946,10 @@ def main() -> None:
     print("\n[comprobación]")
     print("  nodo solución existe  :", "SÍ" if conn.execute("SELECT 1 FROM nodo WHERE id=?", (SOL_ID,)).fetchone() else "NO")
     print("  relaciones cubre sol  :", q(f"SELECT COUNT(*) FROM relacion WHERE origen='{SOL_ID}' AND tipo='cubre'"))
-    print("  relaciones cubre mod→línea:", q(f"SELECT COUNT(*) FROM relacion WHERE tipo='cubre' AND origen!='{SOL_ID}' AND destino LIKE 'linea:coforge:%'"))
-    print("  afirmaciones tecnico  :", q(f"SELECT COUNT(*) FROM afirmacion WHERE nodo_id='{SOL_ID}' AND campo LIKE 'tecnico:%' AND vigente=1"))
+    print("  nodo sol2 existe      :", "SÍ" if conn.execute("SELECT 1 FROM nodo WHERE id=?", (SOL2_ID,)).fetchone() else "NO")
+    print("  relaciones cubre sol2 :", q(f"SELECT COUNT(*) FROM relacion WHERE origen='{SOL2_ID}' AND tipo='cubre'"))
+    print("  relaciones cubre mod→línea:", q(f"SELECT COUNT(*) FROM relacion WHERE tipo='cubre' AND origen NOT IN ('{SOL_ID}','{SOL2_ID}') AND destino LIKE 'linea:coforge:%'"))
+    print("  afirmaciones tecnico  :", q(f"SELECT COUNT(*) FROM afirmacion WHERE nodo_id IN ('{SOL_ID}','{SOL2_ID}') AND campo LIKE 'tecnico:%' AND vigente=1"))
     print("  plan_objetivo lineas  :", q("SELECT COUNT(*) FROM plan_objetivo WHERE plan_id LIKE 'PLAN-CS-T%' AND nodo_id LIKE 'linea:%'"))
     print("  afirmaciones commit   :", q("SELECT COUNT(*) FROM afirmacion WHERE campo='commit' AND vigente=1"))
     conn.close()

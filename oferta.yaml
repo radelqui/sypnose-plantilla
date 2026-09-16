@@ -175,8 +175,8 @@ cubre_por_evidencia:
   T12: observado
   T13: observado
   T14: observado     # gh:run:34983669221 success (lead autoriza subida)
-  T04: propuesto     # como-estoy-hecho React UI (04-agentes, tarea 61)
-  T11: propuesto     # como-estoy-hecho React frontend (04-agentes, tarea 61)
+  T04: observado     # como-estoy-hecho React UI: viewport meta + static served
+  T11: observado     # como-estoy-hecho React frontend: SPA placeholder + domain router
   T15: observado
 # Líneas de proceso: no tienen archivos de código; su certeza viene de evidencias evento:/git:commit:.
 lineas_de_proceso: [T06, T09]
@@ -202,6 +202,17 @@ segunda_solucion:
   repo: radelqui/como-estoy-hecho
   chat: 10-como-estoy-hecho
   lineas: [T02, T03, T04, T11, T12, T13, T14, T15]
+  # Archivos del repo como-estoy-hecho que cubren cada línea.
+  # enlazar_solucion.py usa esto para validar fuentes y crear relaciones cubre.
+  archivos_por_linea:
+    T02: [app/como_estoy_hecho/router.py]
+    T03: [app/como_estoy_hecho/router.py, app/main.py]
+    T04: [app/como_estoy_hecho/static/index.html]
+    T11: [app/como_estoy_hecho/static/index.html, app/como_estoy_hecho/router.py]
+    T12: [app/como_estoy_hecho/pii.py, app/como_estoy_hecho/oferta.py]
+    T13: [app/main.py]
+    T14: [tests/test_integration.py, tests/test_autodiscovery.py]
+    T15: [app/main.py, tests/test_integration.py]
 # A5.5 (16-sep): Stack como dato del registro. Cada entrada verificada contra el repo real.
 # cargar_stack.py crea nodos tec:coforge:<id>, relaciones usa/cubre, afirmaciones.
 # decide_banco: qué puede tener el banco en su lugar. que_cambia: ficheros que se tocan.
