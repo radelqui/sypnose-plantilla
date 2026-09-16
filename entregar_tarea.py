@@ -20,6 +20,11 @@ from barrera import backup_registro, verificar_canonicos_registrados, verificar_
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-4-6"
 
 
+def extraer_carpeta(actor_id: str) -> str:
+    partes = actor_id.split(":")
+    return partes[1] if len(partes) >= 2 else actor_id
+
+
 def ahora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -59,6 +64,15 @@ def main() -> None:
     agente_final = args.agente_real if args.agente_real else agente
     if agente_final == args.verificador:
         sys.exit(f"[FALLO] D7: verificador ({args.verificador}) == agente ({agente_final})")
+
+    carpeta_actor = extraer_carpeta(ACTOR)
+    carpeta_agente = extraer_carpeta(agente_final)
+    if carpeta_actor != carpeta_agente:
+        sys.exit(
+            f"[FALLO] D7 compuerta: actor ({ACTOR}, carpeta={carpeta_actor}) "
+            f"no es el agente de la tarea ({agente_final}, carpeta={carpeta_agente}). "
+            f"Solo el agente de la tarea puede entregarla."
+        )
 
     ver = conn.execute("SELECT id FROM actor WHERE id=?", (args.verificador,)).fetchone()
     if not ver:
