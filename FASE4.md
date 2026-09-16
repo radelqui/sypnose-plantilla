@@ -2,13 +2,14 @@
 
 # FASE 4 — EL CAPARAZÓN (TRASPASO-4 §2, B1–B9)
 
-**Estado (16-sep-2026):** B1–B17 + túnel aviso construidos con las decisiones del lead (cola local, grafo del repo, propuesta de canal,
-Stop en continuación, ENTREGA solo con comprobación en verde, pie de commit en el último párrafo, comprobación ejecutada tal cual y
-contra la base del registro, barrera de escritura en vivo, multi-plan, bloqueo SSH-git, casefold Windows, aviso reintentable,
-aviso y bloqueo por túnel caído).
-- **152/152 pruebas de bloqueo CUMPLE** en modo local (dc94097). Incluyen los 19 casos de los scripts de 07 (`x3_trailers.py`,
-  `x3_entrega2.py`, `x3_entrega3.py`), los controles de `~` de `x3_entrega4_controles.py`, 6 casos B14 (B6.28–B6.29d) y 7 casos
-  B15 (B6.30–B6.31d). `probar_instalador.py` también CUMPLE.
+**Estado (16-sep-2026):** B1–B17 + túnel aviso + descubrimiento de planes + auditoría merge construidos con las decisiones del lead
+(cola local, grafo del repo, propuesta de canal, Stop en continuación, ENTREGA solo con comprobación en verde, pie de commit en el
+último párrafo, comprobación ejecutada tal cual y contra la base del registro, barrera de escritura en vivo, multi-plan, bloqueo SSH-git,
+casefold Windows, aviso reintentable, aviso y bloqueo por túnel caído, descubrimiento de planes nuevos en cada prompt, auditoría git
+que distingue merge-brought de escrituras propias).
+- **159/159 pruebas de bloqueo CUMPLE** en modo local (0e43d77). Incluyen los 19 casos de los scripts de 07 (`x3_trailers.py`,
+  `x3_entrega2.py`, `x3_entrega3.py`), los controles de `~` de `x3_entrega4_controles.py`, 6 casos B14 (B6.28–B6.29d), 7 casos
+  B15 (B6.30–B6.31d) y 3 casos B20 (B20.0–B20.2). `probar_instalador.py` también CUMPLE.
 - **X3 real CUMPLE** según 07 (evento `verificado` 22574, evidencia 182, leídos en el registro). Lo examinó en solo lectura sobre la
   sesión real de 02, con los módulos de 78665a5: cerco en vivo, ENTREGA válida de la tarea 48 y cola conservada con la KB caída (§4.4).
   78665a5 en local también CUMPLE (22580).
@@ -41,8 +42,8 @@ aviso y bloqueo por túnel caído).
 - Instalador idempotente y reversible.
 - SessionStart y UserPromptSubmit comprobados en una sesión real de Claude Code.
 - Vista previa real del brief de 02 (§4.7).
-- Repo `plantilla`, rama **`chat/08-caparazon` en origin, punta `dc94097`** (B15); worktree propio `C:\MICD\Coforge Santander\08-caparazon\wt-plantilla`.
-  main = **d76d523** (merge B15 dc94097). dc94097 fusionado por el arquitecto e instalado en 01, 02, 03 y 04.
+- Repo `plantilla`, rama **`chat/08-caparazon` en origin, punta `a89d1e6`** (B19); worktree propio `C:\MICD\Coforge Santander\08-caparazon\wt-plantilla`.
+  main = **9f891bb** (merge B19 a89d1e6). Instalado en 01 (modo real). B19 pendiente de verificación por 07.
 - **Caparazón instalado en modo real** en 01-git-cicd (evento 22786), 03-datos-rag (22789) y 04-agentes (22790), por delegación del
   lead (22676). 02 reinstalada con B13 por el arquitecto; verificada por 08 en solo lectura (§4.4).
 
@@ -413,11 +414,14 @@ solo cubrían sus archivos; un chat con dos planes no podía entregar tareas del
 
 **Cómo:**
 - `brief.refrescar_trabajo()` fusiona tareas: las del plan activo salen frescas del registro; las de otros planes se conservan del
-  estado. `planes_trabajables` lista todos los planes con tareas del agente.
+  estado. `planes_trabajables` lista todos los planes con tareas del agente. **B19:** también descubre planes nuevos abiertos después
+  del SessionStart escaneando `/planes` en cada prompt, y los añade con sus tareas y permisos.
 - El brief muestra `Plan: <id>` en la cabecera y la instrucción "Para entregar una tarea de otro plan, añade la línea `Plan: <id>`
   al bloque ENTREGA" cuando hay más de un plan.
 - Los permitidos del cerco son la **unión** de los de todos los planes trabajables (fuente: `(unión multi-plan)`).
-- `stop.py`: `Plan: <id>` en la ENTREGA selecciona el plan de la tarea a entregar; se valida contra `planes_trabajables`.
+- `stop.py`: `Plan: <id>` en la ENTREGA selecciona el plan de la tarea a entregar; se valida contra `planes_trabajables`. **B19:**
+  `tarea_de_entrega` consulta `/plan/<id>` en vivo antes de la caché; si el plan no está en `planes_trabajables`, verifica en el
+  registro (estado abierto, dueño H:, tareas trabajables del agente con progreso pendiente/trabajando/devuelta) en vez de rechazarlo.
 - `commit_msg.py`: `Plan:` se valida contra `planes_trabajables` (no solo el plan activo).
 
 **Cómo se comprueba:** B6.28, B6.28b, B6.29, B6.29b, B6.29c y B6.29d (§4.1).
@@ -488,6 +492,9 @@ Invocación: `C:\Python313\python.exe "<carpeta>\.claude\caparazon\<hook>.py"` c
 | stop.py | ENTREGA con `Plan: PLAN-INEXISTENTE` | exit 2, "PLAN-INEXISTENTE no es un plan trabajable" (B14) |
 | commit_msg.py | fichero con `Plan: PLAN-CS-T03` (en planes_trabajables) | exit 0 (B14) |
 | commit_msg.py | fichero con `Plan: PLAN-FALSO` (no en planes_trabajables) | exit 1, "PLAN-FALSO" (B14) |
+| brief.py / prompt_submit.py | SessionStart o UserPromptSubmit cuando un plan nuevo (abierto después del SessionStart) tiene tareas del agente | exit 0; el aviso dice "planes nuevos descubiertos: <id>" y las tareas del plan nuevo aparecen en la lista (B19) |
+| stop.py | ENTREGA con `Plan: <id>` de un plan abierto después del SessionStart (no en la caché de planes_trabajables) y `Tarea: <id>` | exit 0, "ENTREGA registrada en SYPNOSE"; `tarea_de_entrega` verifica en vivo y acepta (B19) |
+| stop.py | ENTREGA con `Plan: <id>` de un plan cerrado o sin dueño H: (no en caché, verificación en vivo falla) | exit 2, "el plan <id> no es un plan abierto con dueño H:" (B19) |
 | pre_tool_use.py | Bash `ssh sypnose@host "cd ~/coforge-santander/plantilla && git add . && git commit -m test"` | exit 2, "git de escritura por SSH bloqueado" (B15) |
 | pre_tool_use.py | Bash `ssh -i key -p 2024 sypnose@host "git -C ~/sypnose-f1 push origin main"` | exit 2, "git de escritura por SSH bloqueado" (B15) |
 | pre_tool_use.py | Bash `ssh sypnose@host "git checkout main"` | exit 2, "git de escritura por SSH bloqueado" (B15) |
@@ -499,6 +506,8 @@ Invocación: `C:\Python313\python.exe "<carpeta>\.claude\caparazon\<hook>.py"` c
 | commit_msg.py | fichero con el pie en un párrafo y `Co-Authored-By` en otro, ambos al final | exit 0; el fichero queda con un solo bloque final y `git interpret-trailers --parse` lista Chat, Model, Plan, Tarea y Co-Authored-By |
 | commit_msg.py | fichero con el pie en medio del cuerpo y otro párrafo al final | exit 1, "tiene que ir en el último párrafo" |
 | commit_msg.py | fichero con `Chat:` o `Model:` repetidos, aunque el último valor sea el correcto | exit 1, "'Chat:' aparece 2 veces; tiene que aparecer una sola vez" |
+| post_tool_use.py | Bash `git -C <wt-extra> merge main` deja ficheros fuera de permitidos del wt-extra | exit 0; la auditoría detecta `git merge` en el comando y añade los ficheros al baseline `sucios_inicio_extra` (B20) |
+| post_tool_use.py | Bash sin merge deja ficheros fuera de permitidos del wt-extra (tras un merge previo) | exit 2, "auditoría git" con el fichero nuevo; los ficheros del merge anterior siguen en el baseline (B20) |
 
 Todo junto:
 ```
@@ -526,7 +535,10 @@ Las 4 pruebas de X3:
 10. varios planes (B14): el brief lista tareas de todos los planes, `Plan: <id>` + `Tarea: <id>` en la ENTREGA selecciona, los
     permitidos del cerco son la unión, `commit_msg.py` valida `Plan:` contra `planes_trabajables` → B6.28–B6.29d;
 11. SSH-git bloqueado (B15): `ssh host "git commit …"` / `push` / `checkout` → bloqueado; `ssh host "git log …"` / `"sqlite3 …"` /
-    `"python3 plantilla/…"` / `"git status"` → pasa → B6.30–B6.31d.
+    `"python3 plantilla/…"` / `"git status"` → pasa → B6.30–B6.31d;
+12. auditoría merge (B20): un `git merge`/`pull`/`rebase` en un Bash trae ficheros de otros commits que no son escrituras del agente;
+    la auditoría añade esos ficheros al baseline y no los bloquea; una escritura propia posterior fuera de permitidos sigue bloqueada →
+    B20.0–B20.2.
 
 ## 4. Evidencia
 
@@ -974,6 +986,11 @@ permiso ajenos `reinstalar no cambia nada (19 ficheros, ni contenido ni fecha)`.
 - B13, varias tareas trabajables en el mismo plan (decisión del lead): 9e41ca1 B13.
 - B14, un chat con varios planes abiertos (decisión del lead): 591128d B14.
 - B15, la cerca bloquea git de escritura por SSH (orden del lead): dc94097 B15.
+- B16+B17, casefold Windows y aviso reintentable (lead, 16-sep): 723787a B16+B17. main bbd6cca.
+- B18, túnel aviso (lead, 16-sep): 63c7439 B18. main 7aedb15.
+- B19, descubrimiento de planes (lead, 16-sep): a89d1e6 B19. main 9f891bb.
+- B6.29b, plan inexistente dice causa real (lead, 16-sep): d8b22ac B6.29b.
+- B20, auditoría merge (lead, 16-sep): 0e43d77 B20. 159/159 CUMPLE.
 ```
    f1ef77f..9e41ca1  chat/08-caparazon -> chat/08-caparazon
 git merge-tree --write-tree origin/main(65d7940) HEAD → exit 0   (f1ef77f ya está en main)
@@ -1193,7 +1210,25 @@ GitHub (gh): rama chat/02-backend-api: CI sin runs · sin PR · main: CI CI/CD f
 - Túnel aviso (lead, 16-sep, hallazgo operativo): cuando el registro no responde (túnel 7101 caído), el aviso dice la causa y el
   remedio en una línea ("túnel 7101 caído: `ssh -N -i …`") y encola `bloqueo:registro_caido` (no `bloqueo:brief`). El prompt
   bloqueado también dice "Remedio: `<comando>`". La dependencia del túnel está documentada en §1 y la propuesta de servicio Windows
-  en §4.8. Tests B7.8, B7.9, B2.4.
+  en §4.8. Tests B7.8, B7.9, B2.4;
+- B19 (lead, 16-sep, evento 23407 de 01): `planes_trabajables` se calculaba solo en el SessionStart y no se refrescaba; un plan
+  abierto después era invisible para `tarea_de_entrega` y se rechazaba con "no es un plan con tareas trabajables de IA:<carpeta>:*".
+  Arreglado en `brief.py`:
+  - `tarea_de_entrega`: lee `/plan/<id>` del registro antes de comprobar la caché; si el plan no está en `planes_trabajables`,
+    verifica en vivo: estado abierto, dueño `H:`, tareas del agente con progreso pendiente/trabajando/devuelta;
+  - `refrescar_trabajo`: escanea `/planes` en cada prompt para descubrir planes nuevos que cumplan `buscar_plan`, añade sus tareas,
+    permisos y planes al estado, y lo avisa ("planes nuevos descubiertos: <id>");
+  - causa raíz del evento 23407: PLAN-CS-T11 se abrió después del SessionStart de 01 → no estaba en `planes_trabajables` →
+    `tarea_de_entrega` lo rechazaba. PLAN-CS-T14 pasaba porque existía al arrancar la sesión;
+- B20 (lead, 16-sep, evento 23596 de 02): `cambios_git()` compara contra `sucios_inicio` (foto al inicio de sesión). Tras un
+  `git merge main` en un worktree extra, los ficheros del merge aparecían como cambios nuevos fuera de `permitidos` → falso
+  `bloqueo:cerco`. Arreglado en `post_tool_use.py`:
+  - si el comando Bash/PowerShell contiene `git merge`, `git pull` o `git rebase`, la auditoría añade los ficheros actuales al
+    baseline (`sucios_inicio` / `sucios_inicio_extra`) con una unión: los ficheros del merge pasan a formar parte de la foto y
+    no se marcan como escrituras del agente;
+  - una escritura propia posterior fuera de `permitidos` sigue bloqueada, porque no está en el baseline;
+  - causa raíz del evento 23596: 02 hizo `git merge main` en su wt-plantilla; los ficheros del merge (caparazón, FASE4.md, etc.)
+    estaban fuera de `specs/T01/**` → auditoría los bloqueó como si 02 los hubiera escrito.
 
 **Hallazgos:**
 - `evento.firma` es el raíl de certificación: la idempotencia de la cola va por clave natural.
