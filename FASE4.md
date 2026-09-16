@@ -2,9 +2,10 @@
 
 # FASE 4 — EL CAPARAZÓN (TRASPASO-4 §2, B1–B9)
 
-**Estado (16-sep-2026):** B1–B17 construidos con las decisiones del lead (cola local, grafo del repo, propuesta de canal,
+**Estado (16-sep-2026):** B1–B17 + túnel aviso construidos con las decisiones del lead (cola local, grafo del repo, propuesta de canal,
 Stop en continuación, ENTREGA solo con comprobación en verde, pie de commit en el último párrafo, comprobación ejecutada tal cual y
-contra la base del registro, barrera de escritura en vivo, multi-plan, bloqueo SSH-git, casefold Windows, aviso reintentable).
+contra la base del registro, barrera de escritura en vivo, multi-plan, bloqueo SSH-git, casefold Windows, aviso reintentable,
+aviso y bloqueo por túnel caído).
 - **152/152 pruebas de bloqueo CUMPLE** en modo local (dc94097). Incluyen los 19 casos de los scripts de 07 (`x3_trailers.py`,
   `x3_entrega2.py`, `x3_entrega3.py`), los controles de `~` de `x3_entrega4_controles.py`, 6 casos B14 (B6.28–B6.29d) y 7 casos
   B15 (B6.30–B6.31d). `probar_instalador.py` también CUMPLE.
@@ -84,6 +85,32 @@ contra la base del registro, barrera de escritura en vivo, multi-plan, bloqueo S
 | KB | knowledge-hub HTTP `SYPNOSE_KB_URL` (defecto `http://127.0.0.1:18791`) |
 | GitHub | `gh` (CLI autenticado en el PC): CI y PR en el brief; el MCP github es opcional (`gh auth token`) |
 | Túnel | `ssh -N -i ~/.ssh/id_ed25519_radelqui -p 2024 -L 7101:127.0.0.1:7101 -L 18791:127.0.0.1:18791 -L 18793:127.0.0.1:18793 sypnose@62.171.147.46` |
+
+### Dependencia del túnel SSH
+
+El caparazón depende de un túnel SSH local que conecta tres puertos al servidor 67 (VPS Sypnose):
+
+| Puerto local | Servicio remoto | Impacto si cae |
+|---|---|---|
+| 7101 | Registro SYPNOSE (API `/salud`, `/planes`, `/plan/<id>`) | **Crítico:** SessionStart no puede verificar el plan → estado `registro_caido`, bloquea prompts y escrituras. Cada prompt nuevo reintenta la conexión |
+| 18791 | Knowledge Hub HTTP (lecciones, KB) | **Degradado:** las lecciones y `bloqueo:kb_caida` se quedan en la cola local; el registro funciona y la ENTREGA se acepta. Al volver, la cola se vacía y se registra `bloqueo:kb_caida` |
+| 18793 | Knowledge Hub SSE (MCP `knowledge-hub`) | **Menor:** el servidor MCP queda inaccesible; los hooks no lo usan directamente |
+
+El comando completo está en `config.json` (`ssh.clave`, `ssh.puerto`, `ssh.destino`) y `comun.comando_tunel(cfg)` lo devuelve:
+```
+ssh -N -i ~/.ssh/id_ed25519_radelqui -p 2024 -L 7101:127.0.0.1:7101 -L 18791:127.0.0.1:18791 -L 18793:127.0.0.1:18793 sypnose@62.171.147.46
+```
+
+**Comportamiento con el túnel caído (7101):**
+- `brief.py` (SessionStart): detecta `RegistroCaido` → estado `abortado_tipo: registro_caido` → aviso "Túnel 7101 caído — remedio:
+  `<comando>`" + `bloqueo:registro_caido` en la cola.
+- `prompt_submit.py` (UserPromptSubmit): si el estado es `registro_caido` → exit 2 con "CAPARAZÓN ABORTADO: túnel 7101 caído.
+  Remedio: `<comando>`".
+- Cada prompt nuevo vuelve a consultar el registro: en cuanto el túnel se levanta, la sesión recoge su plan y trabaja.
+- El flush del SessionStart envía las colas retenidas y registra `bloqueo:registro_caido` con evidencia.
+
+**Detección:** `comun.leer_registro(url, ruta, cfg)` lanza `RegistroCaido` cuando `/salud` no responde (timeout 5 s o error de
+conexión).
 
 ## 2. Módulos
 
@@ -1085,6 +1112,40 @@ Los hooks corrieron aunque la CLI no llegó al modelo (`OAuth session expired`):
 `05-arquitecto-sypnose/PROPUESTA-FASE-CANAL-EVENTOS.md`: `POST /evento` y `POST /evidencia` solo INSERT, actor `IA:`, lista blanca,
 `clave` de idempotencia y test `node:test`.
 
+### 4.8 Propuesta: túnel SSH como servicio de Windows
+
+**Problema:** el túnel muere con cada reinicio de sesión o del PC y los caparazones de 01, 03 y 04 bloquean los prompts con 0 turnos
+útiles y sin aviso (hallazgo operativo del lead, 16-sep-2026). Desde el cambio de aviso, el bloqueo dice la causa y el remedio, pero
+el túnel sigue siendo manual.
+
+**Propuesta: NSSM (Non-Sucking Service Manager) como servicio de Windows.**
+
+1. Instalar NSSM (`winget install nssm` o descarga de nssm.cc):
+   ```
+   nssm install SypnoseTunnel "C:\Windows\System32\OpenSSH\ssh.exe" ^
+     "-N -i C:\Users\carlo\.ssh\id_ed25519_radelqui -p 2024 ^
+      -L 7101:127.0.0.1:7101 -L 18791:127.0.0.1:18791 -L 18793:127.0.0.1:18793 ^
+      sypnose@62.171.147.46"
+   nssm set SypnoseTunnel AppStdout C:\Users\carlo\.claude\logs\tunnel.log
+   nssm set SypnoseTunnel AppStderr C:\Users\carlo\.claude\logs\tunnel.log
+   nssm set SypnoseTunnel AppRestartDelay 5000
+   nssm set SypnoseTunnel Start SERVICE_AUTO_START
+   ```
+2. El servicio arranca con Windows, se reinicia solo al caer (5 s de pausa) y deja log.
+3. Healthcheck opcional: un Task Scheduler cada 60 s que haga `curl -s http://127.0.0.1:7101/salud` y, si falla,
+   `nssm restart SypnoseTunnel`.
+
+**Alternativa nativa (sin NSSM):**
+```
+sc.exe create SypnoseTunnel binPath= "C:\Windows\System32\OpenSSH\ssh.exe -N -i ..." start= auto
+sc.exe failure SypnoseTunnel reset= 60 actions= restart/5000
+```
+Limitación: `sc.exe` solo acepta ejecutables con `SERVICE_TABLE`, así que ssh.exe necesitaría un wrapper (srvany.exe o un script
+PowerShell con `Register-ScheduledJob`). NSSM lo resuelve sin wrapper.
+
+**Riesgo:** la clave SSH (`id_ed25519_radelqui`) queda accesible al servicio SYSTEM. Mitigación: darle una cuenta de servicio
+dedicada con permisos solo sobre esa clave.
+
 ### 4.7 Vista previa del brief real de 02 (solo lectura contra el registro del 67 y `gh`)
 ```
 Plan: PLAN-CS-T01 · abierto · dueño H:carlos · worktree C:/MICD/Coforge Santander/02-backend-api/wt
@@ -1128,7 +1189,11 @@ GitHub (gh): rama chat/02-backend-api: CI sin runs · sin PR · main: CI CI/CD f
   (`casefold` + `re.IGNORECASE`). `specs/t01/file.yaml` pasa contra el patrón `specs/T07/**`. Tests B3.25, B3.25b;
 - B17 (lead, 16-sep, eventos 22828/22830, 22879/22884): el brief y el aviso del Stop dicen el orden (`1) send_message a 07,
   2) ENTREGA`). Un rechazo por falta de aviso a 07 NO cierra la tarea como `entrega_incompleta`: la deja `trabajando` para
-  reintentar en el siguiente turno (`rechazar(reintentable=True)`). Tests B6.32, B6.32b.
+  reintentar en el siguiente turno (`rechazar(reintentable=True)`). Tests B6.32, B6.32b;
+- Túnel aviso (lead, 16-sep, hallazgo operativo): cuando el registro no responde (túnel 7101 caído), el aviso dice la causa y el
+  remedio en una línea ("túnel 7101 caído: `ssh -N -i …`") y encola `bloqueo:registro_caido` (no `bloqueo:brief`). El prompt
+  bloqueado también dice "Remedio: `<comando>`". La dependencia del túnel está documentada en §1 y la propuesta de servicio Windows
+  en §4.8. Tests B7.8, B7.9, B2.4.
 
 **Hallazgos:**
 - `evento.firma` es el raíl de certificación: la idempotencia de la cola va por clave natural.

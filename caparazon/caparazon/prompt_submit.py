@@ -21,7 +21,7 @@ def main() -> None:
             notas = [f"no se pudo confirmar el requisito vigente: registro caído ({e}); se muestra el guardado "
                      f"({estado.get('requisito_confirmado') or estado.get('creado')})"]
     if comun.tipo_aborto(estado) == "registro_caido":
-        comun.bloquear(f"CAPARAZÓN ABORTADO: prompt bloqueado.\n{estado['motivo']}")
+        comun.bloquear(f"CAPARAZÓN ABORTADO: túnel 7101 caído. Remedio: `{comun.comando_tunel(cfg)}`\n{estado['motivo']}")
     if comun.tipo_aborto(estado) == "sin_tarea":
         # B10 (lead, 15-sep): un humano nunca se queda sin poder hablar con su chat; el prompt pasa con el aviso.
         aviso = "\n".join([comun.aviso_sin_tarea(estado, cfg), *notas])
