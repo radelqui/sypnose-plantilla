@@ -1,4 +1,0 @@
-# origen: rag-banking-agent@c7e5f54
-fastapi==0.115.6
-uvicorn[standard]==0.32.1
-pydantic-settings==2.6.1

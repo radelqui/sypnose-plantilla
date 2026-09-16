@@ -3,12 +3,12 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from app.api.routes import router
+from app.api.health.routes import router as health_router
 
 
 def make_app(engine=None) -> FastAPI:
     app = FastAPI()
-    app.include_router(router)
+    app.include_router(health_router, prefix="/api/v1/health")
     app.state.engine = engine
     return app
 

@@ -13,7 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    app_name: str = "microservicio"
+    app_name: str = "{{SERVICE_NAME}}"
     app_database_url: str = Field(default="postgresql+asyncpg://app:app@localhost:5432/banco")
     llamaindex_database_url: str = Field(default="postgresql+asyncpg://ai_ro:ro@localhost:5432/banco")
     identity_header: str = "X-Customer-Id"
