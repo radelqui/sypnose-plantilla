@@ -132,8 +132,22 @@ def instalar(args, carpeta: Path, wt: Path) -> None:
             args.plan_id = config_prev.get("plan_id")
         if not args.worktree_extra:
             extras_preservados = config_prev.get("worktrees_extra", [])
+        for campo in ("coleccion", "kb_proyecto", "prefijo_planes", "verificador"):
+            if getattr(args, campo) is None and campo in config_prev:
+                setattr(args, campo, config_prev[campo])
+        ssh_prev = config_prev.get("ssh", {})
+        for campo_args, campo_ssh in [("ssh_destino", "destino"), ("ssh_puerto", "puerto"),
+                                       ("ssh_clave", "clave"), ("registro_db", "db")]:
+            if getattr(args, campo_args) is None and campo_ssh in ssh_prev:
+                setattr(args, campo_args, ssh_prev[campo_ssh])
     if args.modo is None:
         args.modo = "prueba"
+    for campo, defecto in [("coleccion", "coforge-santander"), ("kb_proyecto", "coforge-santander"),
+                            ("prefijo_planes", "PLAN-CS-"), ("verificador", "07-verificador"),
+                            ("ssh_destino", "sypnose@62.171.147.46"), ("ssh_puerto", 2024),
+                            ("ssh_clave", "~/.ssh/id_ed25519_radelqui"), ("registro_db", "/home/sypnose/sypnose-f1/registry.db")]:
+        if getattr(args, campo) is None:
+            setattr(args, campo, defecto)
 
     for nombre in MODULOS:
         origen = RAIZ / "caparazon" / nombre
@@ -320,15 +334,15 @@ def main() -> None:
                     help="permite degradar de modo real a prueba en una reinstalación")
     ap.add_argument("--worktree-extra", action="append", default=[], metavar="RUTA:PATRONES",
                     help="worktree adicional donde el chat puede escribir (p. ej. su spec en el repo plantilla): <ruta>:<patrón>[,<patrón>]; repetible")
-    ap.add_argument("--prefijo-planes", default="PLAN-CS-")
+    ap.add_argument("--prefijo-planes", default=None)
     ap.add_argument("--plan-id", default=None)
-    ap.add_argument("--coleccion", default="coforge-santander")
-    ap.add_argument("--kb-proyecto", default="coforge-santander")
-    ap.add_argument("--verificador", default="07-verificador")
-    ap.add_argument("--ssh-destino", default="sypnose@62.171.147.46")
-    ap.add_argument("--ssh-puerto", type=int, default=2024)
-    ap.add_argument("--ssh-clave", default="~/.ssh/id_ed25519_radelqui")
-    ap.add_argument("--registro-db", default="/home/sypnose/sypnose-f1/registry.db")
+    ap.add_argument("--coleccion", default=None)
+    ap.add_argument("--kb-proyecto", default=None)
+    ap.add_argument("--verificador", default=None)
+    ap.add_argument("--ssh-destino", default=None)
+    ap.add_argument("--ssh-puerto", type=int, default=None)
+    ap.add_argument("--ssh-clave", default=None)
+    ap.add_argument("--registro-db", default=None)
     args = ap.parse_args()
     carpeta = Path(args.carpeta).resolve()
     wt = Path(args.worktree).resolve() if args.worktree else carpeta / "wt"
