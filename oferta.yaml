@@ -427,14 +427,14 @@ stack:
       nombre: React/Vue con EventSource
       grupo: opcional
       para_que: Frontend SPA que consume SSE del agente
-      por_que: Deseable según oferta (T04/T11); no implementado en el POC
+      por_que: Deseable según oferta (T04/T11); implementado como placeholder React en como-estoy-hecho
       lineas: [T04, T11]
-      evidencia: []
-      estado: opcional-no-implementado
+      evidencia: [como-estoy-hecho:app/como_estoy_hecho/static/index.html, como-estoy-hecho:app/como_estoy_hecho/router.py]
+      estado: implementado-placeholder
       decide_banco: "Framework frontend: React, Angular, Vue, micro-frontend interno"
       que_cambia: [nuevo directorio frontend/, package.json, .github/workflows/ci.yml (build frontend)]
-      hecho_por: []
-      verificado_en: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23875, 23876]
   plantilla:
     - id: sqlite-registro
       nombre: Registro SQLite con raíles y triggers
