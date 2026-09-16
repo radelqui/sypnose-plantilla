@@ -206,5 +206,36 @@ def verificar_sin_delete() -> None:
         )
 
 
+def extraer_carpeta(actor_id: str) -> str:
+    partes = actor_id.split(":")
+    return partes[1] if len(partes) >= 2 else actor_id
+
+
+def verificar_d7_entrega(conn, tarea_id: int, actor_ejecutor: str) -> None:
+    row = conn.execute("SELECT agente FROM tarea WHERE id=?", (tarea_id,)).fetchone()
+    if not row:
+        sys.exit(f"[FALLO] tarea {tarea_id} no existe")
+    agente = row[0]
+    carpeta_actor = extraer_carpeta(actor_ejecutor)
+    carpeta_agente = extraer_carpeta(agente)
+    if carpeta_actor != carpeta_agente:
+        sys.exit(
+            f"[FALLO] D7 compuerta: actor ({actor_ejecutor}, carpeta={carpeta_actor}) "
+            f"no es el agente de la tarea (agente={agente}, carpeta={carpeta_agente}). "
+            f"Solo el agente de la tarea puede entregarla."
+        )
+
+
+def verificar_d7_verificador(conn, verificador: str) -> None:
+    if not _RE_ACTOR07_ID.match(verificador):
+        sys.exit(
+            f"[FALLO] D7 compuerta: verificador ({verificador}) no es IA:07-verificador:*"
+        )
+    if not actor07_valido(verificador, conn):
+        sys.exit(
+            f"[FALLO] D7 compuerta: verificador ({verificador}) no está ratificado"
+        )
+
+
 def verificar_oferta_canonica(conn, h: str) -> None:
     verificar_canonicos_registrados(conn)

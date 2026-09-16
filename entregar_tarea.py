@@ -15,14 +15,15 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from barrera import backup_registro, verificar_canonicos_registrados, verificar_repo_limpio
+from barrera import (
+    backup_registro,
+    verificar_canonicos_registrados,
+    verificar_d7_entrega,
+    verificar_d7_verificador,
+    verificar_repo_limpio,
+)
 
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-4-6"
-
-
-def extraer_carpeta(actor_id: str) -> str:
-    partes = actor_id.split(":")
-    return partes[1] if len(partes) >= 2 else actor_id
 
 
 def ahora() -> str:
@@ -65,18 +66,8 @@ def main() -> None:
     if agente_final == args.verificador:
         sys.exit(f"[FALLO] D7: verificador ({args.verificador}) == agente ({agente_final})")
 
-    carpeta_actor = extraer_carpeta(ACTOR)
-    carpeta_agente = extraer_carpeta(agente_final)
-    if carpeta_actor != carpeta_agente:
-        sys.exit(
-            f"[FALLO] D7 compuerta: actor ({ACTOR}, carpeta={carpeta_actor}) "
-            f"no es el agente de la tarea ({agente_final}, carpeta={carpeta_agente}). "
-            f"Solo el agente de la tarea puede entregarla."
-        )
-
-    ver = conn.execute("SELECT id FROM actor WHERE id=?", (args.verificador,)).fetchone()
-    if not ver:
-        sys.exit(f"[FALLO] verificador {args.verificador} no existe como actor")
+    verificar_d7_entrega(conn, tid, ACTOR)
+    verificar_d7_verificador(conn, args.verificador)
 
     if args.agente_real:
         ag = conn.execute("SELECT id FROM actor WHERE id=?", (args.agente_real,)).fetchone()
