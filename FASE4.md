@@ -2,14 +2,14 @@
 
 # FASE 4 — EL CAPARAZÓN (TRASPASO-4 §2, B1–B9)
 
-**Estado (16-sep-2026):** B1–B17 + túnel aviso + descubrimiento de planes + auditoría merge construidos con las decisiones del lead
+**Estado (16-sep-2026):** B1–B17 + túnel aviso + descubrimiento de planes + auditoría merge + descriptor de fichero construidos con las decisiones del lead
 (cola local, grafo del repo, propuesta de canal, Stop en continuación, ENTREGA solo con comprobación en verde, pie de commit en el
 último párrafo, comprobación ejecutada tal cual y contra la base del registro, barrera de escritura en vivo, multi-plan, bloqueo SSH-git,
 casefold Windows, aviso reintentable, aviso y bloqueo por túnel caído, descubrimiento de planes nuevos en cada prompt, auditoría git
-que distingue merge-brought de escrituras propias).
-- **159/159 pruebas de bloqueo CUMPLE** en modo local (0e43d77). Incluyen los 19 casos de los scripts de 07 (`x3_trailers.py`,
+que distingue merge-brought de escrituras propias, tokenizador de cerco que distingue descriptores de fichero de rutas).
+- **161/161 pruebas de bloqueo CUMPLE** en modo local (9f2bcdd). Incluyen los 19 casos de los scripts de 07 (`x3_trailers.py`,
   `x3_entrega2.py`, `x3_entrega3.py`), los controles de `~` de `x3_entrega4_controles.py`, 6 casos B14 (B6.28–B6.29d), 7 casos
-  B15 (B6.30–B6.31d) y 3 casos B20 (B20.0–B20.2). `probar_instalador.py` también CUMPLE.
+  B15 (B6.30–B6.31d), 3 casos B20 (B20.0–B20.2) y 2 casos B21 (B21.0–B21.1). `probar_instalador.py` también CUMPLE.
 - **X3 real CUMPLE** según 07 (evento `verificado` 22574, evidencia 182, leídos en el registro). Lo examinó en solo lectura sobre la
   sesión real de 02, con los módulos de 78665a5: cerco en vivo, ENTREGA válida de la tarea 48 y cola conservada con la KB caída (§4.4).
   78665a5 en local también CUMPLE (22580).
@@ -539,6 +539,9 @@ Las 4 pruebas de X3:
 12. auditoría merge (B20): un `git merge`/`pull`/`rebase` en un Bash trae ficheros de otros commits que no son escrituras del agente;
     la auditoría añade esos ficheros al baseline y no los bloquea; una escritura propia posterior fuera de permitidos sigue bloqueada →
     B20.0–B20.2.
+13. descriptor de fichero en redirecciones (B21): `2>&1`, `2>`, `1>>` etc. — el dígito antes del operador de redirección es un descriptor
+    de fichero, no una ruta; `touch app/main.py 2>&1` pasa, `touch ../_centinela_fuera.txt 2>&1` bloquea por el fichero, no por el "2" →
+    B21.0–B21.1.
 
 ## 4. Evidencia
 
@@ -991,6 +994,7 @@ permiso ajenos `reinstalar no cambia nada (19 ficheros, ni contenido ni fecha)`.
 - B19, descubrimiento de planes (lead, 16-sep): a89d1e6 B19. main 9f891bb.
 - B6.29b, plan inexistente dice causa real (lead, 16-sep): d8b22ac B6.29b.
 - B20, auditoría merge (lead, 16-sep): 0e43d77 B20. 159/159 CUMPLE.
+- B21, descriptor de fichero en redirecciones (lead, 16-sep): 9f2bcdd B21. 161/161 CUMPLE.
 ```
    f1ef77f..9e41ca1  chat/08-caparazon -> chat/08-caparazon
 git merge-tree --write-tree origin/main(65d7940) HEAD → exit 0   (f1ef77f ya está en main)
@@ -1229,6 +1233,16 @@ GitHub (gh): rama chat/02-backend-api: CI sin runs · sin PR · main: CI CI/CD f
   - una escritura propia posterior fuera de `permitidos` sigue bloqueada, porque no está en el baseline;
   - causa raíz del evento 23596: 02 hizo `git merge main` en su wt-plantilla; los ficheros del merge (caparazón, FASE4.md, etc.)
     estaban fuera de `specs/T01/**` → auditoría los bloqueó como si 02 los hubiera escrito.
+
+- **B21, descriptor de fichero en redirecciones (lead, 16-sep, evento 23641 en 01):** `shlex` tokeniza `cmd 2>&1` como
+  `["cmd", "2", ">&", "1"]`. El `">&"` se saltaba en `_segmento()` pero el `"2"` permanecía en `limpio` como argumento posicional.
+  Para comandos ESCRIBE_TODOS (touch, rm, mkdir…), ese `"2"` se convertía en objetivo y el cerco lo bloqueaba como ruta fuera de
+  `archivos_permitidos`. Arreglado en `cerco.py:_segmento()`:
+  - al encontrar un operador de redirección (`>`, `>>`, `>&`, `<`, etc.), si el último token de `limpio` es un solo dígito, se
+    descarta (`limpio.pop()`): es un descriptor de fichero (2>, 1>>, 2>&1), no una ruta;
+  - el descarte aplica a los tres bloques: REDIRECCIONES, `">&"` y tokens que empiezan por `>`;
+  - causa raíz del evento 23641: 01 ejecutó un Bash con `2>&1` dentro de su worktree; el cerco tomó `"2"` como ruta →
+    `"Bash bloqueada por el cerco: 2 está fuera de archivos_permitidos"`.
 
 **Hallazgos:**
 - `evento.firma` es el raíl de certificación: la idempotencia de la cola va por clave natural.
