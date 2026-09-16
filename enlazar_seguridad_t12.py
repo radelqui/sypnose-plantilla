@@ -93,8 +93,9 @@ def main() -> None:
 
             if not conn.execute("SELECT 1 FROM nodo WHERE id=?", (nodo_id,)).fetchone():
                 conn.execute(
-                    "INSERT INTO nodo (id, tipo, nombre) VALUES (?, 'mod', ?)",
-                    (nodo_id, path.split("/")[-1]),
+                    "INSERT INTO nodo (id, tipo, nombre, ruta, ambito, descubierto_en, descubierto_por) "
+                    "VALUES (?, 'mod', ?, ?, ?, ?, ?)",
+                    (nodo_id, path.split("/")[-1], path, AMBITO, ts, ACTOR),
                 )
                 conn.execute(
                     "INSERT INTO relacion (origen, destino, tipo, certeza, fuente, visto_en) "
