@@ -1088,7 +1088,7 @@ def main() -> None:
     b23_extra = tmp / "b23-extra"
     subprocess.run(["git", "init", "-q", str(b23_extra)], capture_output=True, check=True)
     p1 = subprocess.run([sys.executable, instalador, str(b23_carpeta), "--worktree", str(b23_wt),
-                         "--modo", "real", "--plan-id", "PLAN-CS-T01",
+                         "--modo", "real", "--plan-id", "PLAN-CS-T01", "--prefijo-planes", "PLAN-CS",
                          "--worktree-extra", f"{b23_extra}:specs/T01/**"],
                         capture_output=True, text=True, timeout=60)
     cfg1 = json.loads((b23_carpeta / ".claude" / "caparazon" / "config.json").read_text(encoding="utf-8"))
@@ -1099,12 +1099,13 @@ def main() -> None:
     set2 = json.loads((b23_carpeta / ".claude" / "settings.json").read_text(encoding="utf-8"))
     ok_230 = (p2.returncode == 0
               and cfg2.get("plan_id") == "PLAN-CS-T01"
+              and cfg2.get("prefijo_planes") == "PLAN-CS"
               and len(cfg2.get("worktrees_extra", [])) == 1
               and cfg2["worktrees_extra"][0]["ruta"] == str(b23_extra.resolve())
               and set2.get("env", {}).get("SYPNOSE_MODO") == "real")
-    print(f"\n── B23.0 instalar: reinstalación sin flags preserva modo=real, plan_id y worktrees_extra ──"
+    print(f"\n── B23.0 instalar: reinstalación sin flags preserva modo=real, plan_id, prefijo_planes y worktrees_extra ──"
           f"\nexit={p2.returncode} modo={set2.get('env', {}).get('SYPNOSE_MODO')} plan_id={cfg2.get('plan_id')} "
-          f"extras={cfg2.get('worktrees_extra', [])}"
+          f"prefijo={cfg2.get('prefijo_planes')} extras={cfg2.get('worktrees_extra', [])}"
           f"\n→ {'CUMPLE' if ok_230 else 'NO CUMPLE'}")
     RESULTADOS.append(("B23.0 instalar: reinstalación sin flags preserva config existente", "CUMPLE" if ok_230 else "NO CUMPLE"))
     p3 = subprocess.run([sys.executable, instalador, str(b23_carpeta), "--worktree", str(b23_wt), "--modo", "prueba"],
