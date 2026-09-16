@@ -706,12 +706,12 @@ stack:
       para_que: "La fábrica SYPNOSE corre sobre Claude Code, construido sobre el Claude Agent SDK: agentes por chat con hooks, MCP y permisos"
       por_que: Cada chat es un agente con cerco, brief, commit-msg y MCP (registro + KB)
       lineas: [T06, T09]
-      evidencia: [caparazon/plantillas/mcp.json.jinja, caparazon/caparazon/post_tool_use.py, caparazon/caparazon/cerco.py]
+      evidencia: [caparazon/plantillas/mcp.json, caparazon/instalar_caparazon.py, caparazon/caparazon/post_tool_use.py, caparazon/caparazon/pre_tool_use.py, caparazon/caparazon/cerco.py]
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
       hecho_por: [IA:08-caparazon:claude-sonnet-5, IA:05-arquitecto-sypnose:claude-opus-4-6]
-      verificado_en: [23750, 23747, 23453]
+      verificado_en: [22702, 22722, 22737, 23334, 23367, 23452, 23749, 23809, 23861, 23863]
 roles_por_linea:
   T01: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T02: {rol: 04-agentes, modelo: claude-sonnet-5}
