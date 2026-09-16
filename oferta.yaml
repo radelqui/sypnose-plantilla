@@ -495,16 +495,28 @@ stack:
       que_cambia: [requirements.txt (temporalio), app/workflows/]
       hecho_por: []
       verificado_en: []
+    - id: prometheus-observability
+      nombre: "Observabilidad: métricas Prometheus y logs estructurados"
+      grupo: cicd-calidad
+      para_que: Métricas de servicio (Counter, Histogram) en /metrics y logs JSON estructurados por petición
+      por_que: Prometheus es el estándar de facto en Kubernetes; los logs JSON se indexan sin parseo
+      lineas: [T05]
+      evidencia: [microservicio/esqueleto/app/observability.py@987bd2f]
+      estado: implementado
+      decide_banco: "N/A (Prometheus es el scraping estándar; backend: Grafana, Datadog, herramienta interna)"
+      que_cambia: []
+      hecho_por: [02-backend-api]
+      verificado_en: [61]
     - id: opentelemetry
-      nombre: OpenTelemetry
+      nombre: "OpenTelemetry (trazas hacia el colector del banco)"
       grupo: opcional
-      para_que: Observabilidad distribuida (traces, métricas, logs) estándar CNCF
-      por_que: Instrumentación vendor-neutral; el banco elige el backend (Datadog, Grafana, etc.)
+      para_que: Trazas distribuidas para correlacionar peticiones entre servicios
+      por_que: Instrumentación vendor-neutral; el banco elige el backend
       lineas: [T05]
       evidencia: []
-      estado: opcion-preparada
+      estado: opcion-no-poc
       decide_banco: "Backend: Datadog, Grafana Cloud, Elastic APM, Jaeger, herramienta interna"
-      que_cambia: [requirements.txt (opentelemetry-*), app/core/telemetry.py, microservicio/esqueleto/app/main.py]
+      que_cambia: ["instrumentar tres spans (búsqueda, llamada al modelo, herramientas) sin PII y exportar por OTLP a su colector; variables OTEL_* por nombre"]
       hecho_por: []
       verificado_en: []
   plantilla:
