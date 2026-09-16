@@ -74,6 +74,17 @@ lo que el banco puede decidir sustituir, y los ficheros/variables que cambian.
 | Verificador independiente + segundo verificador | 07-verificador verifica cada tarea; D7b impide auto-verificación por rol | N/A (artefacto de proceso de desarrollo, no entra en producción) | — | — |
 | Firmas por delegación | 05-arquitecto firma tareas y líneas tras veredicto de 07 | N/A (artefacto de proceso de desarrollo, no entra en producción) | — | — |
 
+## Prácticas de ingeniería
+
+| Tecnología | Lo nuestro (POC) | Lo que decide el banco | Qué cambia | Variables |
+|------------|------------------|------------------------|------------|-----------|
+| Spec-Driven Development (EARS) | Requisitos EARS antes del código; comprobación literal única por tarea | Formato de spec: OpenSpec, Spec Kit, Gherkin, formato interno del banco | specs/Txx/spec.md (formato), comprobar_esqueleto.py (parser) | — |
+| TDD con puerta de cobertura ≥85% | Tests como entrega; CI bloquea merge si cobertura < 85% | N/A (práctica de ingeniería, no tecnología sustituible) | — | — |
+| Revisión independiente (D7) | Verificador distinto del autor; triggers SQL impiden auto-verificación | N/A (práctica de ingeniería, no tecnología sustituible) | — | — |
+| Trunk-based por chat (rama + trailers) | Cada chat en su rama con trailers Chat/Model/Plan/Tarea en commit-msg | N/A (práctica de ingeniería, no tecnología sustituible) | — | — |
+| Decisiones fechadas (ADR equivalente) | Decisiones numeradas y fechadas en PLAN.md y TRASPASO-* como ADR ligero | N/A (práctica de ingeniería, no tecnología sustituible) | — | — |
+| FinOps por evento (coste_turno_usd) | Coste por turno y por actor registrado en cada evento del registro | N/A (práctica de ingeniería, no tecnología sustituible) | — | — |
+
 ## Opcional / futuro
 
 | Tecnología | Lo nuestro (POC) | Lo que decide el banco | Qué cambia | Variables |

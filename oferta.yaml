@@ -2,6 +2,12 @@
 # con cargar_molde.py e instanciar.py. Diseño: TRASPASO-3 VERSIÓN 1 (00-lead). Ajustes de comprobación: FASE3.md §8.
 plantilla: microservicio-ia
 oferta: "Python Developer + IA · Coforge/Santander · sep-2026"
+# A5.6 (16-sep, decisión Carlos): textos canónicos de portada. Se cargan como afirmaciones del nodo colección.
+portada:
+  govern: "Coste por turno y por actor, modelos y proveedores por actor, políticas como raíles del registro, madurez como certeza y firma."
+  engineering: "Requisitos EARS antes del código, tests como entrega, pipeline con puertas, stack modular: cambiar una pieza toca solo esa pieza."
+  execution: "Agentes por chat, MCPs, traza de cada herramienta, consumo."
+  plantilla: "SYPNOSE se convierte en plantilla: la misma fábrica monta el siguiente microservicio; mídelo leyendo: líneas cubiertas, verificadas y firmadas, tareas, veredictos, coste y el diff del segundo microservicio."
 lineas:
   - id: T-01
     oferta: "Develop and maintain web applications using Python for backend services"
@@ -482,6 +488,66 @@ stack:
       evidencia: [enlazar_solucion.py]
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
+      que_cambia: []
+    - id: sdd-ears
+      nombre: Spec-Driven Development (EARS)
+      grupo: practicas-ingenieria
+      para_que: Requisitos EARS antes del código; comprobación literal única por tarea
+      por_que: Sin spec no hay entrega; el verificador compara salida real contra la EARS
+      lineas: [T06, T09]
+      evidencia: [specs/T01/spec.md, specs/T02/spec.md, specs/T03/spec.md]
+      estado: implementado
+      decide_banco: "Formato de spec: OpenSpec, Spec Kit, Gherkin, formato interno del banco"
+      que_cambia: [specs/Txx/spec.md (formato), comprobar_esqueleto.py (parser)]
+    - id: tdd-puerta
+      nombre: TDD con puerta de cobertura ≥85%
+      grupo: practicas-ingenieria
+      para_que: Tests como entrega; CI bloquea merge si cobertura < 85%
+      por_que: Regla del banco; cov-fail-under=85 en pipeline
+      lineas: [T07, T14]
+      evidencia: [.github/workflows/ci.yml@pytest --cov, .github/workflows/ci.yml@cov-fail-under]
+      estado: implementado
+      decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
+      que_cambia: []
+    - id: revision-independiente
+      nombre: Revisión independiente (D7)
+      grupo: practicas-ingenieria
+      para_que: Verificador distinto del autor; triggers SQL impiden auto-verificación
+      por_que: Regla D7 (quien ejecuta no juzga) + D7b (mismo rol con otro modelo no es independiente)
+      lineas: [T06]
+      evidencia: [firmar.py, barrera.py@actor07_valido]
+      estado: implementado
+      decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
+      que_cambia: []
+    - id: trunk-por-chat
+      nombre: Trunk-based por chat (rama + trailers)
+      grupo: practicas-ingenieria
+      para_que: Cada chat en su rama con trailers Chat/Model/Plan/Tarea en commit-msg
+      por_que: Trazabilidad total; cada commit enlaza al plan y al modelo que lo escribió
+      lineas: [T09]
+      evidencia: [caparazon/caparazon/commit_msg.py]
+      estado: implementado
+      decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
+      que_cambia: []
+    - id: decisiones-fechadas
+      nombre: Decisiones fechadas (ADR equivalente)
+      grupo: practicas-ingenieria
+      para_que: Decisiones numeradas y fechadas en PLAN.md y TRASPASO-* como ADR ligero
+      por_que: Auditoría de decisiones de arquitectura sin herramienta externa
+      lineas: [T09]
+      evidencia: [TRASPASO.md, TRASPASO-5.md]
+      estado: implementado
+      decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
+      que_cambia: []
+    - id: finops-por-evento
+      nombre: FinOps por evento (coste_turno_usd)
+      grupo: practicas-ingenieria
+      para_que: Coste por turno y por actor registrado en cada evento del registro
+      por_que: Gobernanza de coste; el PM ve cuánto gasta cada agente en cada tarea
+      lineas: [T09]
+      evidencia: [calcular_coste.py]
+      estado: implementado
+      decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
       que_cambia: []
 roles_por_linea:
   T01: {rol: 02-backend-api, modelo: claude-sonnet-5}

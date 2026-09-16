@@ -170,6 +170,26 @@ def main():
 
             print(f"  {nodo_id}: {nombre} [{grupo}] certeza={certeza} estado={estado_final}")
 
+    # Portada: afirmaciones de texto canónico sobre el nodo solución
+    portada = oferta.get("portada", {})
+    portada_count = 0
+    for capa, texto in portada.items():
+        campo = f"portada_{capa}"
+        if not args.dry_run:
+            rc = conn.execute(
+                "INSERT OR IGNORE INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando, evidencia, vigente) "
+                "VALUES (?, ?, ?, 'observado', ?, ?, ?, 'oferta.yaml#portada', 1)",
+                (SOL_ID, campo, texto, FUENTE, args.actor, ahora()),
+            ).rowcount
+            if rc == 1:
+                portada_count += 1
+                afirmaciones += 1
+        else:
+            print(f"  [dry-run] portada {campo}: {texto[:60]}...")
+            portada_count += 1
+    if portada_count:
+        print(f"  [portada] {portada_count} afirmaciones creadas")
+
     if not args.dry_run and (altas or afirmaciones):
         conn.execute(
             "INSERT INTO evento (cuando, actor, accion, detalle) VALUES (?,?,?,?)",

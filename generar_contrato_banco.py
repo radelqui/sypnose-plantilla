@@ -22,6 +22,7 @@ GRUPO_ORDEN = [
     "ia-agentes",
     "contenedores-despliegue",
     "cicd-calidad",
+    "practicas-ingenieria",
     "opcional",
 ]
 
@@ -31,6 +32,7 @@ GRUPO_TITULO = {
     "ia-agentes": "IA y agentes",
     "contenedores-despliegue": "Contenedores y despliegue",
     "cicd-calidad": "CI/CD y calidad",
+    "practicas-ingenieria": "Prácticas de ingeniería",
     "opcional": "Opcional / futuro",
 }
 
