@@ -2,6 +2,12 @@
 # con cargar_molde.py e instanciar.py. Diseño: TRASPASO-3 VERSIÓN 1 (00-lead). Ajustes de comprobación: FASE3.md §8.
 plantilla: microservicio-ia
 oferta: "Python Developer + IA · Coforge/Santander · sep-2026"
+# A5.6 (16-sep, decisión Carlos): textos canónicos de portada. Se cargan como afirmaciones del nodo colección.
+portada:
+  govern: "Coste por turno y por actor, modelos y proveedores por actor, políticas como raíles del registro, madurez como certeza y firma."
+  engineering: "Requisitos EARS antes del código, tests como entrega, pipeline con puertas, stack modular: cambiar una pieza toca solo esa pieza."
+  execution: "Agentes por chat, MCPs, traza de cada herramienta, consumo."
+  plantilla: "SYPNOSE se convierte en plantilla: la misma fábrica monta el siguiente microservicio; mídelo leyendo: líneas cubiertas, verificadas y firmadas, tareas, veredictos, coste y el diff del segundo microservicio."
 lineas:
   - id: T-01
     oferta: "Develop and maintain web applications using Python for backend services"
@@ -32,11 +38,11 @@ lineas:
     bloqueos_esperados: [identidad]
   - id: T-04
     oferta: "Implement responsive and user-friendly interfaces"
-    plan: "Interfaz (deseable)"
-    clase: investigar
-    ears: "Cuando exista frontend, DEBE consumir /consultar por EventSource y mostrar tokens progresivamente."
-    comprobacion: "pendiente: sin frontend aún"
-    rol: 06-frontend
+    plan: "Interfaz React mínima en como-estoy-hecho"
+    clase: mantener
+    ears: "Cuando GET /como-estoy-hecho/ui responda 200, el body DEBE contener 'react' y 'viewport' (SPA mínima servida por el microservicio)."
+    comprobacion: "curl -sf http://localhost:8010/como-estoy-hecho/ui | grep -q react && curl -sf http://localhost:8010/como-estoy-hecho/ui | grep -q viewport && echo ok"
+    rol: 04-agentes
     skills: [frontend-ui-engineering]
     bloqueos_esperados: []
   - id: T-05
@@ -169,6 +175,8 @@ cubre_por_evidencia:
   T12: observado
   T13: observado
   T14: observado     # gh:run:34983669221 success (lead autoriza subida)
+  T04: propuesto     # como-estoy-hecho React UI (04-agentes, tarea 61)
+  T11: propuesto     # como-estoy-hecho React frontend (04-agentes, tarea 61)
   T15: observado
 # Líneas de proceso: no tienen archivos de código; su certeza viene de evidencias evento:/git:commit:.
 lineas_de_proceso: [T06, T09]
@@ -193,19 +201,434 @@ segunda_solucion:
   nombre: como-estoy-hecho
   repo: radelqui/como-estoy-hecho
   chat: 10-como-estoy-hecho
-  lineas: [T02, T12, T03, T13, T14, T15]
+  lineas: [T02, T03, T04, T11, T12, T13, T14, T15]
+# A5.5 (16-sep): Stack como dato del registro. Cada entrada verificada contra el repo real.
+# cargar_stack.py crea nodos tec:coforge:<id>, relaciones usa/cubre, afirmaciones.
+# decide_banco: qué puede tener el banco en su lugar. que_cambia: ficheros que se tocan.
+# generar_contrato_banco.py genera CONTRATO-BANCO.md desde esta sección.
+stack:
+  solucion:
+    - id: python311
+      nombre: Python 3.11
+      grupo: lenguaje-backend
+      para_que: Lenguaje del microservicio, tipado estricto, async nativo
+      por_que: Requisito de la oferta (Python Developer), soporte LTS
+      lineas: [T01, T03, T05]
+      evidencia: [Dockerfile@FROM python:3.11-slim, .github/workflows/ci.yml@python-version]
+      estado: implementado
+      decide_banco: Versión de Python aprobada (3.11+ preferido por async y typing)
+      que_cambia: [Dockerfile (FROM), .github/workflows/ci.yml (python-version), requirements*.txt]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5]
+      verificado_en: [22990, 22988]
+    - id: fastapi
+      nombre: FastAPI + Uvicorn
+      grupo: lenguaje-backend
+      para_que: Framework HTTP async con OpenAPI automática
+      por_que: Rendimiento async para streams SSE, validación con Pydantic integrada
+      lineas: [T01, T03]
+      evidencia: [requirements.txt@fastapi, requirements.txt@uvicorn, Dockerfile@CMD uvicorn]
+      estado: implementado
+      decide_banco: "Framework HTTP: Flask, Django REST, framework interno del banco"
+      que_cambia: [requirements.txt, app/main.py (app factory), Dockerfile (CMD)]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5]
+      verificado_en: [22988, 23418]
+    - id: pydantic
+      nombre: Pydantic / pydantic-settings
+      grupo: lenguaje-backend
+      para_que: Validación de esquemas y configuración por entorno
+      por_que: Sin secretos en código; la config viene de env vars que inyecta K8s
+      lineas: [T01, T10]
+      evidencia: [requirements.txt@pydantic-settings]
+      estado: implementado
+      decide_banco: "Validación: marshmallow, attrs, o schema del framework elegido"
+      que_cambia: [requirements.txt, app/core/config.py, app/api/schemas.py]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5]
+      verificado_en: [22988, 22992]
+    - id: sqlalchemy-asyncpg
+      nombre: SQLAlchemy 2 async + asyncpg
+      grupo: base-datos
+      para_que: ORM async con pool de conexiones para PostgreSQL
+      por_que: Dos URLs de conexión (app rw + ai readonly) por mínimo privilegio
+      lineas: [T01, T08]
+      evidencia: [requirements.txt@sqlalchemy, requirements.txt@asyncpg]
+      estado: implementado
+      decide_banco: "ORM/driver: psycopg2 sync, Django ORM, driver propietario del banco"
+      que_cambia: [requirements.txt, app/core/db.py, docker-compose.yml (env vars)]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5, IA:03-datos-rag:claude-sonnet-5]
+      verificado_en: [23418, 23253]
+    - id: llamaindex
+      nombre: LlamaIndex (core + postgres + anthropic + openai)
+      grupo: ia-agentes
+      para_que: RAG con retriever híbrido (vectores + texto), FunctionTool, FunctionAgent
+      por_que: Abstracción de vectorstore + agente que evita SQL directo desde el LLM
+      lineas: [T02, T08, T12]
+      evidencia: [requirements.txt@llama-index-core, requirements.txt@llama-index-vector-stores-postgres, requirements.txt@llama-index-llms-anthropic, requirements.txt@llama-index-embeddings-openai]
+      estado: implementado
+      decide_banco: "Framework RAG: LangChain, Haystack, SDK directo del LLM, framework interno"
+      que_cambia: [requirements.txt, app/rag/engine.py, app/agent/tools.py, scripts/ingest.py]
+      hecho_por: [IA:04-agentes:claude-sonnet-5, IA:03-datos-rag:claude-sonnet-5]
+      verificado_en: [23418, 23253, 23297]
+    - id: anthropic-llm
+      nombre: Modelo de frontera (Anthropic API)
+      grupo: ia-agentes
+      para_que: LLM para razonamiento del agente bancario
+      por_que: API vía secreto K8s; el LLM nunca elige el cliente (identidad por cabecera)
+      lineas: [T02]
+      evidencia: [requirements.txt@llama-index-llms-anthropic, k8s/deployment.yaml@rag-agent-llm-secrets]
+      estado: implementado
+      decide_banco: "LLM provider: Amazon Bedrock, Azure OpenAI, pasarela interna, modelo on-premise"
+      que_cambia: [requirements.txt (llm adapter), app/core/config.py (ANTHROPIC_API_KEY → var nueva), k8s/deployment.yaml (secretos)]
+      hecho_por: [IA:04-agentes:claude-sonnet-5]
+      verificado_en: [23418]
+    - id: openai-embeddings
+      nombre: Modelo de embeddings (OpenAI API)
+      grupo: ia-agentes
+      para_que: Generación de vectores 1536d para búsqueda semántica
+      por_que: Índice HNSW sobre pgvector, dimensión fija declarada en init_db.sql
+      lineas: [T08]
+      evidencia: [requirements.txt@llama-index-embeddings-openai, scripts/init_db.sql@vector(1536)]
+      estado: implementado
+      decide_banco: "Embeddings provider: Azure OpenAI, Bedrock Titan, Cohere, modelo local"
+      que_cambia: [requirements.txt (embeddings adapter), app/core/config.py (OPENAI_API_KEY → var nueva), scripts/init_db.sql (dimensión vector)]
+      hecho_por: [IA:03-datos-rag:claude-sonnet-5]
+      verificado_en: [23253]
+    - id: sse-starlette
+      nombre: SSE (Server-Sent Events)
+      grupo: lenguaje-backend
+      para_que: Streaming de tokens del agente al cliente en tiempo real
+      por_que: Alternativa ligera a WebSocket; navegador reconecta automáticamente
+      lineas: [T03]
+      evidencia: [requirements.txt@sse-starlette]
+      estado: implementado
+      decide_banco: "Streaming: WebSocket, gRPC streaming, polling largo"
+      que_cambia: [requirements.txt, app/api/routes.py (streaming handler)]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5]
+      verificado_en: [22988]
+    - id: postgresql16
+      nombre: PostgreSQL 16 + pgvector
+      grupo: base-datos
+      para_que: Base de datos relacional con extensión vectorial para RAG híbrido
+      por_que: Misma BD para datos de negocio y vectores; sin servicio externo de embeddings
+      lineas: [T08, T01]
+      evidencia: [docker-compose.yml@pgvector/pgvector:pg16, scripts/init_db.sql@CREATE EXTENSION vector]
+      estado: implementado
+      decide_banco: "PostgreSQL del banco con pgvector aprobado; versión y extensiones según DBA"
+      que_cambia: [docker-compose.yml (imagen), scripts/init_db.sql (extensión y roles), app/core/config.py (URLs)]
+      hecho_por: [IA:03-datos-rag:claude-sonnet-5, IA:02-backend-api:claude-sonnet-5]
+      verificado_en: [23253, 23418]
+    - id: hnsw-gin
+      nombre: Índices HNSW + GIN/tsvector
+      grupo: base-datos
+      para_que: Búsqueda semántica (HNSW cosine) + texto exacto (GIN tsvector español)
+      por_que: Retriever híbrido combina ambos índices sin servicio externo
+      lineas: [T08]
+      evidencia: [scripts/init_db.sql@USING hnsw, scripts/init_db.sql@USING gin]
+      estado: implementado
+      decide_banco: "Parámetros HNSW (m, ef_construction), idioma de tsvector, política de reindexado"
+      que_cambia: [scripts/init_db.sql (parámetros de índice y configuración de idioma)]
+      hecho_por: [IA:03-datos-rag:claude-sonnet-5]
+      verificado_en: [23253]
+    - id: docker
+      nombre: Docker multi-stage slim + docker-compose
+      grupo: contenedores-despliegue
+      para_que: Imagen mínima non-root para producción; entorno local reproducible
+      por_que: Escaneo de imagen obligatorio; sin root ni paquetes innecesarios
+      lineas: [T05, T14]
+      evidencia: [Dockerfile@FROM python:3.11-slim AS builder, Dockerfile@USER appuser, docker-compose.yml@build]
+      estado: implementado
+      decide_banco: "Registry: Harbor, ACR, ECR, GHCR; imagen base aprobada por seguridad"
+      que_cambia: [Dockerfile (FROM base image), .github/workflows/ci.yml (registry login), docker-compose.yml]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5, IA:01-git-cicd:claude-sonnet-5]
+      verificado_en: [22990, 23416]
+    - id: kubernetes
+      nombre: Kubernetes (Deployment + Service + HPA)
+      grupo: contenedores-despliegue
+      para_que: Orquestación con escalado automático, probes y secretos
+      por_que: Deployment del banco; probes verifican health, HPA escala por CPU
+      lineas: [T05, T14]
+      evidencia: [k8s/deployment.yaml@Deployment, k8s/deployment.yaml@Service, k8s/deployment.yaml@HorizontalPodAutoscaler, k8s/deployment.yaml@startupProbe, k8s/secrets.example.yaml]
+      estado: implementado
+      decide_banco: "Plataforma: EKS, AKS, OpenShift, GKE; políticas de red, RBAC y Secrets→Vault"
+      que_cambia: [k8s/deployment.yaml (apiVersion, securityContext, registry, secretRef→Vault), k8s/secrets.example.yaml]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5, IA:01-git-cicd:claude-sonnet-5]
+      verificado_en: [22990, 23416]
+    - id: github-actions
+      nombre: GitHub Actions (CI/CD)
+      grupo: cicd-calidad
+      para_que: Pipeline test→build→scan→deploy con aprobación humana
+      por_que: Nada llega a producción sin lint, SAST, tests 85%, escaneo de imagen, aprobación
+      lineas: [T07, T14]
+      evidencia: [.github/workflows/ci.yml@test, .github/workflows/ci.yml@build-and-push, .github/workflows/ci.yml@deploy]
+      estado: implementado
+      decide_banco: "CI/CD: Jenkins, Azure DevOps, GitLab CI, Tekton"
+      que_cambia: [.github/workflows/ci.yml → pipeline equivalente en la herramienta elegida]
+      hecho_por: [IA:01-git-cicd:claude-sonnet-5]
+      verificado_en: [23295, 23416]
+    - id: pytest
+      nombre: pytest + pytest-asyncio + httpx
+      grupo: cicd-calidad
+      para_que: Tests unitarios e integración async con cobertura mínima 85%
+      por_que: Regla del banco; cov-fail-under=85 en CI
+      lineas: [T01, T02, T03, T05]
+      evidencia: [requirements-dev.txt@pytest, requirements-dev.txt@pytest-asyncio, requirements-dev.txt@httpx, .github/workflows/ci.yml@pytest --cov]
+      estado: implementado
+      decide_banco: "Framework de tests compatible; umbral de cobertura según política"
+      que_cambia: [requirements-dev.txt, .github/workflows/ci.yml (comando test)]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5, IA:04-agentes:claude-sonnet-5]
+      verificado_en: [22988, 23418, 22990, 23297]
+    - id: ruff
+      nombre: ruff
+      grupo: cicd-calidad
+      para_que: Linter rápido (reemplaza flake8+isort+pyupgrade)
+      por_que: Lint obligatorio antes de merge; velocidad en CI
+      lineas: [T07, T14]
+      evidencia: [requirements-dev.txt@ruff, .github/workflows/ci.yml@ruff check]
+      estado: implementado
+      decide_banco: "Linter: flake8, pylint, SonarQube policy engine"
+      que_cambia: [requirements-dev.txt, .github/workflows/ci.yml (lint step), pyproject.toml]
+      hecho_por: [IA:01-git-cicd:claude-sonnet-5]
+      verificado_en: [23295, 23416]
+    - id: bandit
+      nombre: bandit
+      grupo: cicd-calidad
+      para_que: SAST para Python (detecta inyecciones, eval, secretos)
+      por_que: Escaneo de seguridad obligatorio por regla del banco
+      lineas: [T10, T14]
+      evidencia: [requirements-dev.txt@bandit, .github/workflows/ci.yml@bandit -r app]
+      estado: implementado
+      decide_banco: "SAST: SonarQube, Snyk Code, Checkmarx, Fortify"
+      que_cambia: [requirements-dev.txt, .github/workflows/ci.yml (SAST step)]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5, IA:01-git-cicd:claude-sonnet-5]
+      verificado_en: [22992, 23416]
+    - id: trivy
+      nombre: trivy
+      grupo: cicd-calidad
+      para_que: Escaneo de vulnerabilidades de imagen Docker (CRITICAL+HIGH)
+      por_que: Regla del banco; exit-code 1 bloquea merge si hay CVE graves
+      lineas: [T10, T14]
+      evidencia: [.github/workflows/ci.yml@aquasecurity/trivy-action]
+      estado: implementado
+      decide_banco: "Escaneo de imagen: Snyk Container, Prisma Cloud, Aqua, Grype"
+      que_cambia: [.github/workflows/ci.yml (scan step, action/plugin)]
+      hecho_por: [IA:02-backend-api:claude-sonnet-5, IA:01-git-cicd:claude-sonnet-5]
+      verificado_en: [22992, 23416]
+    - id: react-vue
+      nombre: React/Vue con EventSource
+      grupo: opcional
+      para_que: Frontend SPA que consume SSE del agente
+      por_que: Deseable según oferta (T04/T11); no implementado en el POC
+      lineas: [T04, T11]
+      evidencia: []
+      estado: opcional-no-implementado
+      decide_banco: "Framework frontend: React, Angular, Vue, micro-frontend interno"
+      que_cambia: [nuevo directorio frontend/, package.json, .github/workflows/ci.yml (build frontend)]
+      hecho_por: []
+      verificado_en: []
+  plantilla:
+    - id: sqlite-registro
+      nombre: Registro SQLite con raíles y triggers
+      grupo: lenguaje-backend
+      para_que: Base de datos de evidencia con reglas D4/D7/C8 como triggers SQL
+      por_que: Append-only con compuertas; quien ejecuta no juzga, solo humanos declaran
+      lineas: [T06, T09]
+      evidencia: [raiz.py, barrera.py@verificar_sin_delete]
+      estado: implementado
+      decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
+      que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-sonnet-5, IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23455, 23454]
+    - id: barrera
+      nombre: Scripts con barrera (hash + backup)
+      grupo: cicd-calidad
+      para_que: Toda escritura al registro pasa verificación de hashes canónicos y backup
+      por_que: Ninguna escritura manual por SSH; scripts validan antes de escribir
+      lineas: [T09]
+      evidencia: [barrera.py@backup_registro, barrera.py@verificar_canonicos_registrados]
+      estado: implementado
+      decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
+      que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-sonnet-5, IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23455, 23454]
+    - id: caparazon
+      nombre: Caparazón de hooks (11 módulos)
+      grupo: cicd-calidad
+      para_que: Cerco, auditoría git, brief, stop, commit-msg para cada sesión de chat
+      por_que: Los agentes solo escriben ficheros permitidos; merge se audita
+      lineas: [T07, T09]
+      evidencia: [caparazon/caparazon/cerco.py, caparazon/caparazon/post_tool_use.py, caparazon/instalar_caparazon.py]
+      estado: implementado
+      decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
+      que_cambia: []
+      hecho_por: [IA:08-caparazon:claude-sonnet-5]
+      verificado_en: [23750, 23747, 23453]
+    - id: mcp-sypnose
+      nombre: MCP sypnose (registro)
+      grupo: lenguaje-backend
+      para_que: Servidor MCP que expone lectura/escritura del registro a los chats
+      por_que: Los chats no hacen SSH directo; el MCP aplica permisos por rol
+      lineas: [T09]
+      evidencia: [caparazon/plantillas/mcp.json.jinja]
+      estado: implementado
+      decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
+      que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-sonnet-5]
+      verificado_en: []
+    - id: mcp-kb
+      nombre: MCP knowledge-hub (KB)
+      grupo: lenguaje-backend
+      para_que: Servidor MCP para la base de conocimiento del proyecto
+      por_que: Lecciones aprendidas, notificaciones inter-agente, búsqueda semántica
+      lineas: [T09]
+      evidencia: [caparazon/plantillas/mcp.json.jinja]
+      estado: implementado
+      decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
+      que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-sonnet-5]
+      verificado_en: []
+    - id: verificador
+      nombre: Verificador independiente + segundo verificador
+      grupo: cicd-calidad
+      para_que: 07-verificador verifica cada tarea; D7b impide auto-verificación por rol
+      por_que: Regla D7 (quien ejecuta no juzga) + D7b (mismo rol ≠ independiente)
+      lineas: [T06]
+      evidencia: [firmar.py, barrera.py@actor07_valido]
+      estado: implementado
+      decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
+      que_cambia: []
+      hecho_por: [IA:07-verificador:claude-opus-5, IA:07-verificador:claude-opus-4-6]
+      verificado_en: [23422, 23372, 23430]
+    - id: firmas
+      nombre: Firmas por delegación
+      grupo: cicd-calidad
+      para_que: 05-arquitecto firma tareas y líneas tras veredicto de 07
+      por_que: D4 (solo humanos declaran) delegado al arquitecto por orden permanente
+      lineas: [T09]
+      evidencia: [firmar.py@firma, firmar.py@tarea]
+      estado: implementado
+      decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
+      que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23430]
+    - id: vista-publica
+      nombre: Vista pública (09-sypnose-vista)
+      grupo: opcional
+      para_que: Página web con el estado del proyecto para stakeholders
+      por_que: Transparencia; Carlos puede enviar el link al banco
+      lineas: [T15]
+      evidencia: [enlazar_solucion.py@plan_objetivo]
+      estado: implementado
+      decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
+      que_cambia: []
+      hecho_por: [IA:09-sypnose-vista:claude-sonnet-5]
+      verificado_en: [23455, 23357]
+    - id: kb-lecciones
+      nombre: KB de lecciones aprendidas
+      grupo: opcional
+      para_que: Base de conocimiento con alertas, feedback y lecciones del proyecto
+      por_que: Mejora continua; cada arquitecto reporta §4.1
+      lineas: [T09]
+      evidencia: [caparazon/plantillas/mcp.json.jinja@knowledge-hub]
+      estado: implementado
+      decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
+      que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-sonnet-5]
+      verificado_en: []
+    - id: graphify
+      nombre: graphify (knowledge graph)
+      grupo: opcional
+      para_que: Transforma el registro en grafo de conocimiento navegable
+      por_que: Visualización de relaciones nodo→línea→plan→solución
+      lineas: [T15]
+      evidencia: [enlazar_solucion.py]
+      estado: implementado
+      decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
+      que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23455]
+    - id: sdd-ears
+      nombre: Spec-Driven Development (EARS)
+      grupo: practicas-ingenieria
+      para_que: Requisitos EARS antes del código; comprobación literal única por tarea
+      por_que: Sin spec no hay entrega; el verificador compara salida real contra la EARS
+      lineas: [T06, T09]
+      evidencia: [specs/T01/spec.md, specs/T02/spec.md, specs/T03/spec.md]
+      estado: implementado
+      decide_banco: "Formato de spec: OpenSpec, Spec Kit, Gherkin, formato interno del banco"
+      que_cambia: [specs/Txx/spec.md (formato), comprobar_esqueleto.py (parser)]
+      hecho_por: [IA:05-arquitecto-sypnose:claude-sonnet-5, IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23785]
+    - id: tdd-puerta
+      nombre: TDD con puerta de cobertura ≥85%
+      grupo: practicas-ingenieria
+      para_que: Tests como entrega; CI bloquea merge si cobertura < 85%
+      por_que: Regla del banco; cov-fail-under=85 en pipeline
+      lineas: [T07, T14]
+      evidencia: [.github/workflows/ci.yml@pytest --cov, .github/workflows/ci.yml@cov-fail-under]
+      estado: implementado
+      decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
+      que_cambia: []
+      hecho_por: [IA:01-git-cicd:claude-sonnet-5]
+      verificado_en: [23295]
+    - id: revision-independiente
+      nombre: Revisión independiente (D7)
+      grupo: practicas-ingenieria
+      para_que: Verificador distinto del autor; triggers SQL impiden auto-verificación
+      por_que: Regla D7 (quien ejecuta no juzga) + D7b (mismo rol con otro modelo no es independiente)
+      lineas: [T06]
+      evidencia: [firmar.py, barrera.py@actor07_valido]
+      estado: implementado
+      decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
+      que_cambia: []
+      hecho_por: [IA:07-verificador:claude-opus-4-6, IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23422, 23372, 23428]
+    - id: trunk-por-chat
+      nombre: Trunk-based por chat (rama + trailers)
+      grupo: practicas-ingenieria
+      para_que: Cada chat en su rama con trailers Chat/Model/Plan/Tarea en commit-msg
+      por_que: Trazabilidad total; cada commit enlaza al plan y al modelo que lo escribió
+      lineas: [T09]
+      evidencia: [caparazon/caparazon/commit_msg.py]
+      estado: implementado
+      decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
+      que_cambia: []
+      hecho_por: [IA:08-caparazon:claude-sonnet-5]
+      verificado_en: [23750, 23747]
+    - id: decisiones-fechadas
+      nombre: Decisiones fechadas (ADR equivalente)
+      grupo: practicas-ingenieria
+      para_que: Decisiones numeradas y fechadas en PLAN.md y TRASPASO-* como ADR ligero
+      por_que: Auditoría de decisiones de arquitectura sin herramienta externa
+      lineas: [T09]
+      evidencia: [TRASPASO.md, TRASPASO-5.md]
+      estado: implementado
+      decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
+      que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-sonnet-5]
+      verificado_en: [23785]
+    - id: finops-por-evento
+      nombre: FinOps por evento (coste_turno_usd)
+      grupo: practicas-ingenieria
+      para_que: Coste por turno y por actor registrado en cada evento del registro
+      por_que: Gobernanza de coste; el PM ve cuánto gasta cada agente en cada tarea
+      lineas: [T09]
+      evidencia: [calcular_coste.py]
+      estado: implementado
+      decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
+      que_cambia: []
+      hecho_por: [IA:05-arquitecto-sypnose:claude-opus-4-6]
+      verificado_en: [23785]
 roles_por_linea:
   T01: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T02: {rol: 04-agentes, modelo: claude-sonnet-5}
   T03: {rol: 02-backend-api, modelo: claude-sonnet-5}
-  T04: {rol: 06-frontend, modelo: claude-sonnet-5}
+  T04: {rol: 04-agentes, modelo: claude-sonnet-5}
   T05: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T06: {rol: 07-verificador, modelo: claude-opus-5}
   T07: {rol: 01-git-cicd, modelo: claude-sonnet-5}
   T08: {rol: 03-datos-rag, modelo: claude-sonnet-5}
   T09: {rol: 05-arquitecto-sypnose, modelo: claude-opus-5}
   T10: {rol: 02-backend-api, modelo: claude-sonnet-5}
-  T11: {rol: 06-frontend, modelo: claude-sonnet-5}
+  T11: {rol: 04-agentes, modelo: claude-sonnet-5}
   T12: {rol: 04-agentes, modelo: claude-sonnet-5}
   T13: {rol: 01-git-cicd, modelo: claude-sonnet-5}
   T14: {rol: 01-git-cicd, modelo: claude-sonnet-5}
