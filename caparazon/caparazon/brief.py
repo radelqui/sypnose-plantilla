@@ -260,14 +260,15 @@ def abortar(estado: dict, cfg: dict, motivo: str, plan_id: str | None, nota_cola
     estado.update(abortado=True, abortado_tipo=tipo, motivo=motivo, plan={"id": plan_id} if plan_id else None, tarea=None, requisito=None)
     sid = estado["session_id"]
     if not estado.get("bloqueo_brief_emitido"):
-        comun.encolar(sid, comun.ops_bloqueo(estado["actor"], "brief", plan_id, f"sesión {sid[:8]} sin trabajo permitido: {motivo}"))
+        mecanismo = "registro_caido" if tipo == "registro_caido" else "brief"
+        comun.encolar(sid, comun.ops_bloqueo(estado["actor"], mecanismo, plan_id, f"sesión {sid[:8]} sin trabajo permitido: {motivo}"))
         estado["bloqueo_brief_emitido"] = True
         r = comun.vaciar(cfg, sid, "arranque")
         nota_cola = unir_nota(nota_cola, comun.texto_fallo_cola(cfg, r))
     estado["nota_cola"] = nota_cola
     if tipo == "registro_caido":
-        titulo, regla = "ABORTADO", ("Mientras el registro no responda, el caparazón bloquea tus prompts y todas las escrituras "
-                                     "(Edit/Write/Bash/PowerShell). Cada prompt nuevo vuelve a consultar el registro.")
+        titulo, regla = "ABORTADO", (f"Túnel 7101 caído — remedio: `{comun.comando_tunel(cfg)}`\n"
+                                     "Mientras no responda, el caparazón bloquea prompts y escrituras. Cada prompt nuevo reintenta.")
     else:
         titulo, regla = "SIN TAREA", f"{comun.aviso_sin_tarea(estado, cfg)} Cada prompt nuevo vuelve a consultar el registro."
     estado["brief"] = (f"═══ BRIEF CAPARAZÓN · {cfg['carpeta']} · {titulo} ═══\nActor: {estado['actor']}\nMotivo: {motivo}\n"
@@ -481,7 +482,8 @@ def main() -> None:
     cfg = comun.config()
     estado = construir_estado(entrada, cfg)
     if estado["abortado"]:
-        aviso = (f"Caparazón ABORTADO: {estado['motivo']}" if comun.tipo_aborto(estado) == "registro_caido"
+        aviso = (f"Caparazón ABORTADO — túnel 7101 caído: `{comun.comando_tunel(cfg)}`\n{estado['motivo']}"
+                 if comun.tipo_aborto(estado) == "registro_caido"
                  else f"Caparazón sin tarea: {comun.aviso_sin_tarea(estado, cfg)}")
     else:
         aviso = f"Caparazón: {estado['plan']['id']} · tarea {estado['tarea']['id']} · cerco {', '.join(estado['permitidos'])}"
