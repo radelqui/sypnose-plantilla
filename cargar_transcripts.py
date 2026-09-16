@@ -108,15 +108,16 @@ def main() -> None:
                 for fname in chat_files[chat]:
                     ruta = f"transcripts/{chat}/{fname}"
                     existing = conn.execute(
-                        "SELECT 1 FROM afirmacion WHERE nodo_id=? AND clave=? AND valor=?",
-                        (plan_id, "transcript", ruta),
+                        "SELECT 1 FROM afirmacion WHERE nodo_id=? AND campo='transcript' AND valor=?",
+                        (plan_id, ruta),
                     ).fetchone()
                     if existing:
                         existian.append(f"{plan_id}: {ruta}")
                         continue
                     conn.execute(
-                        "INSERT INTO afirmacion (nodo_id, clave, valor) VALUES (?, 'transcript', ?)",
-                        (plan_id, ruta),
+                        "INSERT INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando) "
+                        "VALUES (?, 'transcript', ?, 'observado', ?, ?, ?)",
+                        (plan_id, ruta, "plantilla/cargar_transcripts.py", ACTOR, ts),
                     )
                     altas.append(f"{plan_id}: {ruta}")
 
