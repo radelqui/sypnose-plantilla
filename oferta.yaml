@@ -187,6 +187,13 @@ archivos_por_linea:
   T13: [Dockerfile, k8s/**]
   T14: [.github/workflows/**, ci/**]
   T15: [README.md, k8s/**, Dockerfile]
+# Segunda solución (A5.2 TRASPASO-5): microservicio público de autodiagnóstico
+# Instanciado desde plantilla/microservicio/esqueleto/ con instanciar_microservicio.py
+segunda_solucion:
+  nombre: como-estoy-hecho
+  repo: radelqui/como-estoy-hecho
+  chat: 10-como-estoy-hecho
+  lineas: [T02, T12, T03, T13, T14, T15]
 roles_por_linea:
   T01: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T02: {rol: 04-agentes, modelo: claude-sonnet-5}
