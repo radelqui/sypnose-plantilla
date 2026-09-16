@@ -76,27 +76,27 @@ def main() -> None:
 
         # --- Tarea 68: 05-arquitecto → .gitignore al esqueleto + tags ---
         conn.execute(
-            "INSERT INTO tarea (plan_id, ref, que, agente, estado, creada_en) "
-            "VALUES (?, 68, ?, ?, 'pendiente', ?)",
+            "INSERT INTO tarea (plan_id, req_ref, titulo, agente, progreso) "
+            "VALUES (?, 'R1', ?, ?, 'pendiente')",
             (PLAN_ID,
-             "Añadir .gitignore al esqueleto (plantilla/microservicio/esqueleto, mismo contenido que como-estoy-hecho), "
-             "tag esqueleto-v1.2 en sypnose-plantilla; tras tarea 69, fusionar a main de como-estoy-hecho, "
-             "resincronizar con v1.2 y poner tags esqueleto-v1.1 (commit resync 198b391) y esqueleto-v1.2 (commit resync nuevo) "
-             "en como-estoy-hecho. Comprobación: python microservicio/comprobar_segundo.py exit 0.",
-             "IA:05-arquitecto-sypnose:claude-opus-4-6", ts),
+             "Añadir .gitignore al esqueleto, tag v1.2, resync como-estoy-hecho con v1.2 + tags v1.1/v1.2; "
+             "comprobación: python microservicio/comprobar_segundo.py exit 0",
+             "IA:05-arquitecto-sypnose:claude-opus-4-6"),
         )
-        print("  [tarea] 68: .gitignore + tags + resync (05-arquitecto)")
+        t68_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        print(f"  [tarea] {t68_id}: .gitignore + tags + resync (05-arquitecto)")
 
         # --- Tarea 69: 04-agentes → mover test_integration.py ---
         conn.execute(
-            "INSERT INTO tarea (plan_id, ref, que, agente, estado, creada_en) "
-            "VALUES (?, 69, ?, ?, 'pendiente', ?)",
+            "INSERT INTO tarea (plan_id, req_ref, titulo, agente, progreso, bloqueada_por) "
+            "VALUES (?, 'R2', ?, ?, 'pendiente', NULL)",
             (PLAN_ID,
              "Mover tests/test_integration.py a tests/como_estoy_hecho/test_integration.py "
-             "sin cambiar contenido salvo imports. Comprobación: python -m pytest tests -q.",
-             "IA:04-agentes:claude-sonnet-5", ts),
+             "sin cambiar contenido salvo imports; comprobación: python -m pytest tests -q",
+             "IA:04-agentes:claude-sonnet-5"),
         )
-        print("  [tarea] 69: mover test_integration.py (04-agentes)")
+        t69_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        print(f"  [tarea] {t69_id}: mover test_integration.py (04-agentes)")
 
         conn.execute("ROLLBACK" if args.dry_run else "COMMIT")
     except Exception:
