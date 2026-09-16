@@ -1,8 +1,12 @@
-"""Cierra un plan abierto (abierto → cerrado) con evento plan_cerrado.
+"""Cierra o rechaza un plan abierto (abierto → cerrado/rechazado).
 
     python3 cerrar_plan.py --db ~/sypnose-f1/registry.db \
         --plan PLAN-CS-T01 \
         --detalle "cerrado por 00-lead por delegación explícita de Carlos; línea firmada 22755"
+
+    python3 cerrar_plan.py --db ~/sypnose-f1/registry.db \
+        --plan PLAN-CS-T13 --estado rechazado \
+        --detalle "abierto por error; la línea T11 está vacía por diseño"
 """
 from __future__ import annotations
 
@@ -22,10 +26,12 @@ def ahora() -> str:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Cierra un plan abierto")
+    ap = argparse.ArgumentParser(description="Cierra o rechaza un plan abierto")
     ap.add_argument("--db", required=True)
     ap.add_argument("--plan", required=True, help="plan_id, ej. PLAN-CS-T01")
-    ap.add_argument("--detalle", required=True, help="texto para el evento plan_cerrado")
+    ap.add_argument("--estado", choices=("cerrado", "rechazado"), default="cerrado",
+                    help="estado destino (por defecto cerrado)")
+    ap.add_argument("--detalle", required=True, help="texto para el evento")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -45,8 +51,8 @@ def main() -> None:
     if not row:
         sys.exit(f"[FALLO] plan {args.plan} no existe")
     pid, estado, dueno = row
-    if estado == "cerrado":
-        print(f"[INFO] {pid} ya está cerrado")
+    if estado == args.estado:
+        print(f"[INFO] {pid} ya está {args.estado}")
         conn.close()
         return
     if estado != "abierto":
@@ -60,7 +66,7 @@ def main() -> None:
         print(f"[WARN] {pid} tiene {pendientes} tareas no terminadas")
 
     if args.dry_run:
-        print(f"[dry-run] cerrar {pid}")
+        print(f"[dry-run] {args.estado} {pid}")
         conn.close()
         return
 
@@ -71,12 +77,13 @@ def main() -> None:
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute(
-            "UPDATE plan SET estado='cerrado', cerrado_en=? WHERE id=?",
-            (ts, args.plan),
+            "UPDATE plan SET estado=?, cerrado_en=? WHERE id=?",
+            (args.estado, ts, args.plan),
         )
+        accion = "plan_cerrado" if args.estado == "cerrado" else "plan_rechazado"
         conn.execute(
             "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
-            (ts, ACTOR, "plan_cerrado", args.plan, args.detalle),
+            (ts, ACTOR, accion, args.plan, args.detalle),
         )
         conn.commit()
     except Exception:
@@ -85,7 +92,7 @@ def main() -> None:
     finally:
         conn.close()
 
-    print(f"[OK] {args.plan} cerrado a las {ts}")
+    print(f"[OK] {args.plan} {args.estado} a las {ts}")
 
 
 if __name__ == "__main__":
