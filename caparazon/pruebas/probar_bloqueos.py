@@ -648,6 +648,13 @@ def main() -> None:
         ], start=6):
             ataque_entrega(i, *args_caso, origen="x3_entrega3.py")
 
+        # B22 (lead, 16-sep): forma_pura acepta cd a worktrees_extra y al plan.worktree, no solo al worktree principal.
+        ataque_entrega(220, "cd <worktree_extra> && comprobación en verde se acepta", comprobacion,
+                       [(f'cd "{wt_extra}" && {comprobacion}', verde_07)], "15 passed in 1.04s", False, etiqueta="B22.0 Stop (B22)")
+        ruta_ajena = str(tmp / "ruta-ajena-que-no-es-worktree")
+        ataque_entrega(221, "cd <ruta ajena> && comprobación en verde se rechaza", comprobacion,
+                       [(f'cd "{ruta_ajena}" && {comprobacion}', verde_07)], "15 passed in 1.04s", True, etiqueta="B22.1 Stop (B22)")
+
         # '~' en la BD del registro (lead, 15-sep, tras los controles de 07 en x3_entrega4_controles.py): config y comando se comparan con
         # '~' expandido al home del usuario del destino, y la escritura usa la ruta absoluta.
         def config_db(valor: str) -> None:

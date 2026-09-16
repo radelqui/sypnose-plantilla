@@ -140,7 +140,7 @@ def _bd_remota_del_registro(bd: str, cfg: dict) -> bool:
     return bool(esperada) and comun.ruta_remota(bd, destino) == comun.ruta_remota(esperada, destino)
 
 
-def forma_pura(comando: str, comprobacion: str, cwd: str | None, worktree: str, cfg: dict) -> str | None:
+def forma_pura(comando: str, comprobacion: str, cwd: str | None, worktree: str, cfg: dict, plan_worktree: str | None = None) -> str | None:
     """None si el comando es exactamente la comprobación (solo se admite `cd <worktree> &&` delante; una consulta SQL va como
     `sqlite3 <bd> "<consulta>"`, directa o por ssh); si no, por qué no cuenta. Un filtro, un `; echo`, una sustitución o un echo del texto
     de la comprobación falsearían la salida que se valida."""
@@ -168,7 +168,15 @@ def forma_pura(comando: str, comprobacion: str, cwd: str | None, worktree: str, 
     esperados = _tokens(orden) or []
     if [suelto(t) for t in toks] != [suelto(t) for t in esperados]:
         return "no es exactamente la comprobación"
-    if not cerco.dentro(cerco.norm(base, base), cerco.norm(worktree, worktree)):
+    # B22: aceptar cd al worktree principal, worktrees_extra o plan.worktree
+    zonas = [cerco.norm(worktree, worktree)]
+    for x in cfg.get("worktrees_extra") or []:
+        if x.get("ruta"):
+            zonas.append(cerco.norm(x["ruta"], x["ruta"]))
+    if plan_worktree:
+        proyecto = os.path.dirname(cfg.get("carpeta_ruta", worktree))
+        zonas.append(cerco.norm(plan_worktree, proyecto))
+    if not any(cerco.dentro(cerco.norm(base, base), z) for z in zonas):
         return f"se ejecutó fuera del worktree ({base})"
     return None
 
@@ -177,12 +185,13 @@ def validar(bloque: str, estado: dict, cfg: dict):
     fallos = []
     comprobacion = estado["requisito"]["comprobacion"]
     orden = suelto(ejecutable(comprobacion))
+    plan_wt = (estado.get("plan") or {}).get("worktree")
     if orden not in suelto(bloque):
         fallos.append(f"el bloque ENTREGA no cita la comprobación literal `{comprobacion}`")
     intentos = [c for c in estado.get("comandos", []) if orden in suelto(c["comando"])]
-    ejecuciones = [c for c in intentos if forma_pura(c["comando"], comprobacion, c.get("cwd"), estado["worktree"], cfg) is None]
+    ejecuciones = [c for c in intentos if forma_pura(c["comando"], comprobacion, c.get("cwd"), estado["worktree"], cfg, plan_wt) is None]
     if intentos and (not ejecuciones or intentos[-1] is not ejecuciones[-1]):
-        motivo = forma_pura(intentos[-1]["comando"], comprobacion, intentos[-1].get("cwd"), estado["worktree"], cfg)
+        motivo = forma_pura(intentos[-1]["comando"], comprobacion, intentos[-1].get("cwd"), estado["worktree"], cfg, plan_wt)
         fallos.append(f"la última ejecución de la comprobación («{intentos[-1]['comando'][:160]}») no cuenta: {motivo}. Tiene que ir tal cual "
                       "(solo se admite delante 'cd <worktree> &&'), sin tuberías, ';', '&&'/'||' añadidos, echo, redirecciones ni sustituciones")
     linea_salida = None
