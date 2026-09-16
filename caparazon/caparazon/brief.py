@@ -13,9 +13,9 @@ import cerco
 import comun
 
 FORMATO_ENTREGA = (
-    "El cierre de la tarea exige tres cosas: la comprobación ejecutada tal cual en el worktree con Bash/PowerShell (sin tuberías, filtros "
-    "ni comandos añadidos); un aviso a 07-verificador por "
-    "send_message que incluya el bloque ENTREGA; y un mensaje final que termina con el bloque:\n"
+    "El cierre de la tarea exige tres cosas EN ESTE ORDEN: 1) ejecutar la comprobación tal cual en el worktree con Bash/PowerShell "
+    "(sin tuberías, filtros ni comandos añadidos); 2) enviar a 07-verificador por send_message un bloque con la comprobación y su salida; "
+    "3) cerrar el turno con el bloque ENTREGA.\n"
     "ENTREGA\nComprobación: <comando literal del requisito>\nSalida: <líneas reales de la salida, pegadas sin retocar>\n"
     "LECCIÓN: <una línea útil para el siguiente agente de esta línea de la oferta>\n"
     "Una ENTREGA solo vale si la comprobación pasa: una salida con fallos (failed, error, Traceback, exit code distinto de 0) o un "

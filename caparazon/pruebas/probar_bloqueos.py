@@ -289,6 +289,14 @@ def main() -> None:
         caso("B3.24 PreToolUse: un <<EOF dentro de comillas no es heredoc y no esconde la línea siguiente → bloqueada", dir_capa, "pre_tool_use.py",
              {**pre, "tool_name": "Bash", "tool_input": {"command": 'echo "texto <<EOF"\necho x > ../_centinela_fuera.txt\nEOF'}}, env,
              lambda rc, o, e: rc == 2 and en_mensaje(centinela) in e)
+        # B16 (lead, 16-sep): casefold en Windows — el patrón en mayúsculas (specs/T01/**) debe aceptar una ruta en minúsculas (specs/t01).
+        caso("B3.25 PreToolUse (B16): Write en worktree extra con ruta en minúsculas (specs/t01) vs patrón en mayúsculas (specs/T01/**) → pasa",
+             dir_capa, "pre_tool_use.py",
+             {**pre, "tool_name": "Write", "tool_input": {"file_path": os.path.join(wt_extra, "specs", "t01", "spec-b16.md"), "content": "x"}}, env,
+             lambda rc, o, e: rc == 0)
+        caso("B3.25b PreToolUse (control B16): ruta fuera de los permitidos sigue bloqueada con casefold", dir_capa, "pre_tool_use.py",
+             {**pre, "tool_name": "Write", "tool_input": {"file_path": os.path.join(wt_extra, "specs", "T99", "spec.md"), "content": "x"}}, env,
+             lambda rc, o, e: rc == 2 and "fuera de archivos_permitidos" in e)
     post = {**base, "hook_event_name": "PostToolUse", "tool_use_id": "toolu_prueba", "prompt_id": "prompt-prueba"}
     caso("B4.1 PostToolUse: evento a la cola local, sin tocar el registro", dir_capa, "post_tool_use.py",
          {**post, "tool_name": "Write", "tool_input": {"file_path": permitido, "content": "..."},
@@ -555,6 +563,25 @@ def main() -> None:
              lambda rc, o, e: rc == 0 and "CIERRE SIN ENTREGA VÁLIDA" in o,
              despues=lambda: comprobar(f"registro bloqueo:entrega_incompleta={reg.cuenta('bloqueo:entrega_incompleta')} tarea_entregada={reg.cuenta('tarea_entregada')}",
                                        reg.cuenta("bloqueo:entrega_incompleta") == 2 and reg.cuenta("tarea_entregada") == 2))
+        # B17 (lead, 16-sep): si lo único que falta en la ENTREGA es el aviso a 07, no cerrar como entrega_incompleta; dejar reintentar.
+        sid_b17 = f"{sid}-b17"
+        for script_b17, entrada_b17 in [
+            ("brief.py", {**base, "session_id": sid_b17, "hook_event_name": "SessionStart", "source": "startup", "model": "claude-sonnet-5"}),
+            ("prompt_submit.py", {**base, "session_id": sid_b17, "hook_event_name": "UserPromptSubmit", "prompt": "sigue"}),
+            ("post_tool_use.py", {**post, "session_id": sid_b17, "tool_name": "Write", "tool_input": {"file_path": permitido, "content": "x"},
+                                   "tool_response": {"filePath": permitido}}),
+            ("post_tool_use.py", {**post, "session_id": sid_b17, "tool_name": "Bash", "tool_input": {"command": comando_sql},
+                                   "tool_response": {"stdout": "1\n", "stderr": "", "interrupted": False, "isImage": False}}),
+        ]:
+            subprocess.run([sys.executable, str(dir_capa / script_b17)], input=json.dumps(entrada_b17, ensure_ascii=False).encode("utf-8"),
+                           capture_output=True, env={**os.environ, **env}, timeout=240)
+        entrega_b17 = f"ENTREGA\nComprobación: {consulta} → ≥1\nSalida: 1\nLECCIÓN: prueba B17"
+        caso("B6.32 Stop: ENTREGA válida sin aviso a 07 → CIERRE IMPEDIDO (primer intento)", dir_capa, "stop.py",
+             {**stop, "session_id": sid_b17, "last_assistant_message": entrega_b17}, env,
+             lambda rc, o, e: rc == 2 and "falta el aviso a 07-verificador" in e)
+        caso("B6.32b Stop con stop_hook_active=true y solo falta aviso a 07 → no cierra como entrega_incompleta, deja reintentar (B17)",
+             dir_capa, "stop.py", {**stop, "session_id": sid_b17, "stop_hook_active": True, "last_assistant_message": entrega_b17}, env,
+             lambda rc, o, e: rc == 2 and "falta el aviso a 07-verificador" in e and "entrega_incompleta" not in o and "CIERRE SIN ENTREGA VÁLIDA" not in o)
 
         # Casos de 07-verificador, x3_entrega2.py (su scratchpad, 15-sep), portados tal cual: sesión nueva por caso con su comprobación.
         def preparar_entrega(sid_caso, comprobacion_caso, pasos):

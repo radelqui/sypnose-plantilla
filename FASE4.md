@@ -2,9 +2,9 @@
 
 # FASE 4 — EL CAPARAZÓN (TRASPASO-4 §2, B1–B9)
 
-**Estado (15-sep-2026 ~18:30):** B1–B15 construidos con las decisiones del lead (cola local, grafo del repo, propuesta de canal,
+**Estado (16-sep-2026):** B1–B17 construidos con las decisiones del lead (cola local, grafo del repo, propuesta de canal,
 Stop en continuación, ENTREGA solo con comprobación en verde, pie de commit en el último párrafo, comprobación ejecutada tal cual y
-contra la base del registro, barrera de escritura en vivo, multi-plan, bloqueo SSH-git).
+contra la base del registro, barrera de escritura en vivo, multi-plan, bloqueo SSH-git, casefold Windows, aviso reintentable).
 - **152/152 pruebas de bloqueo CUMPLE** en modo local (dc94097). Incluyen los 19 casos de los scripts de 07 (`x3_trailers.py`,
   `x3_entrega2.py`, `x3_entrega3.py`), los controles de `~` de `x3_entrega4_controles.py`, 6 casos B14 (B6.28–B6.29d) y 7 casos
   B15 (B6.30–B6.31d). `probar_instalador.py` también CUMPLE.
@@ -1123,7 +1123,12 @@ GitHub (gh): rama chat/02-backend-api: CI sin runs · sin PR · main: CI CI/CD f
 - B14: con varios planes abiertos, el brief lista tareas de todos y los permitidos del cerco son la unión. `Plan: <id>` en la ENTREGA
   selecciona el plan; commit-msg valida `Plan:` contra `planes_trabajables`;
 - B15: la cerca bloquea `ssh host "git commit/push/checkout …"` desde los chats de tecnología; SSH solo para scripts de plantilla/
-  contra el registro (sqlite3, python3) y consultas git de solo lectura (log, status, diff, show…).
+  contra el registro (sqlite3, python3) y consultas git de solo lectura (log, status, diff, show…);
+- B16 (lead, 16-sep, eventos 22803/22837 de 01 y 03): la comparación de rutas permitidas en Windows ya es case-insensitive
+  (`casefold` + `re.IGNORECASE`). `specs/t01/file.yaml` pasa contra el patrón `specs/T07/**`. Tests B3.25, B3.25b;
+- B17 (lead, 16-sep, eventos 22828/22830, 22879/22884): el brief y el aviso del Stop dicen el orden (`1) send_message a 07,
+  2) ENTREGA`). Un rechazo por falta de aviso a 07 NO cierra la tarea como `entrega_incompleta`: la deja `trabajando` para
+  reintentar en el siguiente turno (`rechazar(reintentable=True)`). Tests B6.32, B6.32b.
 
 **Hallazgos:**
 - `evento.firma` es el raíl de certificación: la idempotencia de la cola va por clave natural.

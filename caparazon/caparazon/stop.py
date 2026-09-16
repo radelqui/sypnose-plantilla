@@ -210,7 +210,8 @@ def validar(bloque: str, estado: dict, cfg: dict):
     if not leccion:
         fallos.append("falta la línea 'LECCIÓN: ...' (se guarda en la KB con clave leccion-linea-<T>-<fecha>)")
     if not estado.get("aviso_07"):
-        fallos.append("falta el aviso a 07-verificador: send_message a su sesión con el bloque ENTREGA (list_sessions para encontrarla)")
+        fallos.append("falta el aviso a 07-verificador: primero send_message a 07 con la comprobación y su salida, "
+                      "después cierra el turno con ENTREGA (list_sessions para encontrar la sesión de 07)")
     return fallos, (leccion.group(1).strip() if leccion else None), linea_salida, (ejecuciones[-1] if ejecuciones else None)
 
 
@@ -237,8 +238,9 @@ def cerrar_incompleta(cfg: dict, estado: dict, motivo: str) -> None:
              + (f"\n{aviso}" if aviso else ""))
 
 
-def rechazar(cfg: dict, estado: dict, motivo: str, primero: bool) -> None:
-    if not primero:
+def rechazar(cfg: dict, estado: dict, motivo: str, primero: bool, reintentable: bool = False) -> None:
+    # B17 (lead, 16-sep): si lo único que falta es el aviso a 07, no cerrar como entrega_incompleta; dejar trabajando para reintentar.
+    if not primero and not reintentable:
         cerrar_incompleta(cfg, estado, motivo)
     comun.encolar(estado["session_id"], comun.ops_bloqueo(estado["actor"], "entrega", estado["plan"]["id"], motivo))
     envio, aviso = enviar(cfg, estado["session_id"])
@@ -271,7 +273,9 @@ def entregar(cfg: dict, estado: dict, bloque: str, primero: bool, entrada: dict)
     estado = vigente
     fallos, leccion, linea_salida, ultima = validar(bloque, estado, cfg)
     if fallos:
-        rechazar(cfg, estado, "ENTREGA rechazada: " + "; ".join(cambios + fallos), primero)
+        # B17: si el único fallo es la falta de aviso a 07, la tarea se queda trabajando para reintentar en el siguiente turno.
+        solo_aviso = len(fallos) == 1 and "falta el aviso a 07-verificador" in fallos[0]
+        rechazar(cfg, estado, "ENTREGA rechazada: " + "; ".join(cambios + fallos), primero, reintentable=solo_aviso)
     sid, plan_id, actor, tarea = estado["session_id"], estado["plan"]["id"], estado["actor"], estado["tarea"]
     comprobacion = estado["requisito"]["comprobacion"]
     clave = f"leccion-linea-{estado.get('linea') or 'SIN-LINEA'}-{datetime.now():%d%m%y-%H%M}"
