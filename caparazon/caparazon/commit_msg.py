@@ -12,6 +12,21 @@ import comun
 
 CAMPOS = ("Chat", "Model", "Plan", "Tarea")
 TRAILER = re.compile(r"^(?:Chat|Model|Plan|Tarea|(?i:co-authored-by|signed-off-by)):[ \t]*\S")
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def es_merge_de_origin() -> bool:
+    """B24: merge de origin (git merge origin/main, git pull) no necesita trailers."""
+    try:
+        p = subprocess.run(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+                           capture_output=True, text=True, timeout=5, creationflags=_NO_WINDOW)
+        if p.returncode != 0:
+            return False
+        p2 = subprocess.run(["git", "branch", "-r", "--contains", p.stdout.strip()],
+                            capture_output=True, text=True, timeout=10, creationflags=_NO_WINDOW)
+        return p2.returncode == 0 and bool(p2.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def parrafos(lineas: list[str]) -> list[list[str]]:
@@ -59,6 +74,8 @@ def main() -> None:
     ruta = sys.argv[1]
     with open(ruta, encoding="utf-8", errors="replace") as f:
         original = f.read()
+    if original.lstrip().startswith("Merge ") and es_merge_de_origin():
+        sys.exit(0)
     mensaje, bloque, resto = normalizar(original)
     campos = {}
     for linea in bloque:
