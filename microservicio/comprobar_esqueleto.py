@@ -9,8 +9,10 @@ Ejecutar desde la raíz del worktree de plantilla. Resultado:
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -34,7 +36,10 @@ def main() -> None:
         fallo(f"instanciar_microservicio.py no encontrado: {INSTANCIAR}")
 
     if DESTINO.exists():
-        shutil.rmtree(DESTINO)
+        def _force_rm(func, path, _exc_info):
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        shutil.rmtree(DESTINO, onerror=_force_rm)
 
     print(f"[1/3] Instanciando {NOMBRE} en {DESTINO} ...")
     r = subprocess.run(
@@ -47,9 +52,10 @@ def main() -> None:
     print(r.stdout)
 
     print(f"[2/3] make test en {DESTINO} ...")
+    env = {**os.environ, "PYTHON": sys.executable}
     r = subprocess.run(
         ["make", "test"],
-        cwd=str(DESTINO), capture_output=True, text=True,
+        cwd=str(DESTINO), capture_output=True, text=True, env=env,
     )
     if r.returncode != 0:
         fallo(f"make test falló (exit {r.returncode}):\n{r.stderr}\n{r.stdout}")

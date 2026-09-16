@@ -2,12 +2,13 @@
 
 SERVICE_NAME ?= {{SERVICE_NAME}}
 SERVICE_PORT ?= {{SERVICE_PORT}}
+PYTHON ?= python3
 
 install:
-	pip3 install -e ".[dev]"
+	$(PYTHON) -m pip install -e ".[dev]"
 
 test:
-	python3 -m pytest tests/ -v --tb=short
+	$(PYTHON) -m pytest tests/ -v --tb=short
 
 lint:
 	ruff check app/ tests/
