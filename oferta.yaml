@@ -495,6 +495,54 @@ stack:
       que_cambia: [requirements.txt (temporalio), app/workflows/]
       hecho_por: []
       verificado_en: []
+    - id: vllm
+      nombre: vLLM
+      grupo: opcional
+      para_que: Motor de inferencia autohospedado tras las mismas variables del contrato
+      por_que: El banco sirve el modelo en su propia infra; el microservicio no cambia
+      lineas: [T02]
+      evidencia: []
+      estado: opcion-no-poc
+      decide_banco: "Motor de inferencia: vLLM, TGI, SGLang, Ollama, endpoint interno del banco"
+      que_cambia: ["nada de código: endpoint y variables del contrato (OPENAI_API_BASE/OPENAI_API_KEY por nombre, valor inyectado por el banco)"]
+      hecho_por: []
+      verificado_en: []
+    - id: openhands
+      nombre: OpenHands
+      grupo: opcional
+      para_que: Runtime de agentes multivendedor para operar el desarrollo
+      por_que: El caparazón corre sobre Claude Code hoy; el molde y el registro no dependen del runtime
+      lineas: [T07, T09]
+      evidencia: []
+      estado: opcion-no-poc
+      decide_banco: "Runtime de agentes: OpenHands, Claude Code, Codex CLI, herramienta interna del banco"
+      que_cambia: ["el caparazón de hooks se adapta al runner elegido; molde y registro (oferta.yaml, registry.db) sin cambios"]
+      hecho_por: []
+      verificado_en: []
+    - id: apache-age
+      nombre: Apache AGE
+      grupo: opcional
+      para_que: Grafo junto a pgvector en la misma base Postgres
+      por_que: El grafo que hoy alimenta graphify viviría en la misma base sin otro motor
+      lineas: [T08]
+      evidencia: []
+      estado: opcion-no-poc
+      decide_banco: "Grafo: Apache AGE, Neo4j, ArangoDB, sin grafo (solo pgvector)"
+      que_cambia: ["extensión AGE en la misma base Postgres; el grafo que hoy alimenta graphify pasa a openCypher"]
+      hecho_por: []
+      verificado_en: []
+    - id: rtk-agentmemory
+      nombre: RTK + agentmemory
+      grupo: opcional
+      para_que: Optimización de tokens y memoria entre agentes
+      por_que: Capa junto al coste por turno que ya medimos en el registro
+      lineas: [T12]
+      evidencia: []
+      estado: opcion-no-poc
+      decide_banco: "Optimización/memoria: RTK, agentmemory, memoria nativa del SDK, sin capa"
+      que_cambia: ["capa de optimización junto al coste por turno ya medido (eventos con tokens_turno/coste_turno_usd)"]
+      hecho_por: []
+      verificado_en: []
     - id: prometheus-observability
       nombre: "Observabilidad: métricas Prometheus y logs estructurados"
       grupo: cicd-calidad
