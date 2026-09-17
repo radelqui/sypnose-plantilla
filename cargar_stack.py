@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,12 +33,22 @@ def ahora() -> str:
 
 
 def evidencia_existe(ruta_evidencia: str, bloque: str) -> bool:
-    if bloque == "solucion":
-        base = REPO_RAG
-    else:
-        base = PLANTILLA_DIR
+    bases = [REPO_RAG, PLANTILLA_DIR] if bloque == "solucion" else [PLANTILLA_DIR, REPO_RAG]
     fichero = ruta_evidencia.split("@")[0]
-    return (base / fichero).exists()
+    if any((base / fichero).exists() for base in bases):
+        return True
+    # Ultimo recurso: la evidencia lleva pin @commit; comprobar el objeto git
+    # (p. ej. esqueleto en rama chat/02-backend-api todavia sin fusionar a main).
+    if "@" in ruta_evidencia:
+        commit = ruta_evidencia.split("@", 1)[1]
+        for base in bases:
+            r = subprocess.run(
+                ["git", "-C", str(base), "cat-file", "-e", f"{commit}:{fichero}"],
+                capture_output=True,
+            )
+            if r.returncode == 0:
+                return True
+    return False
 
 
 def main():
