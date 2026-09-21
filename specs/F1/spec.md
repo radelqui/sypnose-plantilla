@@ -3,7 +3,7 @@
 # Spec PLAN-CS-F1 — Raíles deterministas de integridad de requisitos
 
 Origen: 07-verificador/AUDITORIA-R0-ROLES.md (21-sep-2026), tablas A y B.
-Contrato: Requerimientos/F1/requisitos-dictados.md (lead, v1, 21-sep-2026).
+Contrato: Requerimientos/F1/requisitos-dictados.md (lead, v2, 21-sep-2026).
 Herramienta: plantilla/compuerta_f1.py. Trabaja solo sobre COPIA del registro (sqlite3 .backup).
 
 ## RAÍL 1 — Autoría R0: la spec la escribe el rol que nombra el EARS
@@ -18,14 +18,16 @@ Violaciones existentes que debe detectar: T05 (rol EARS=01-git-cicd, autor=02-ba
 
 ## RAÍL 2 — El examinado no reescribe su examen
 
-EARS:
-Cuando un actor intente modificar los campos ears o comprobacion de un requisito, y el rol de ese actor (por campo actor) o el rol del autor interpuesto (por campo autor: del detalle del evento de modificación) coincida con el rol del agente de alguna tarea abierta (progreso NOT IN ('hecha','retirada')) que ese requisito examina, el registro DEBE rechazar la escritura con RAISE(ABORT). Implementación: TRIGGER BEFORE UPDATE OF ears, comprobacion ON requisito, con tabla sesion_actual(actor TEXT, autor TEXT) poblada por el script antes de cada operación. La función de extracción de rol separa el segundo segmento de 'IA:rol:modelo' y el segundo de 'H:nombre'.
+Lo que el raíl IMPIDE (trigger BEFORE UPDATE):
+El trigger f1_r2_examinado_no_reescribe bloquea un UPDATE de ears o comprobacion en requisito cuando existen tareas abiertas para ese requisito Y no existe un evento cambio_requisito_aprobado vigente que cumpla estas cuatro condiciones: (a) actor humano (H:*) o lead (IA:00-lead:*); (b) detalle contiene la ref del requisito; (c) detalle contiene fichero=<ruta> y sha256=<64 hex> (formato obligatorio); (d) el evento es posterior al último requisito_modificado para esa ref (consumo: una aprobación vale para un solo cambio); (e) el evento tiene menos de 24 horas de antigüedad.
+
+Lo que el raíl DETECTA (--verificar r2, post-hoc):
+La verificación post-hoc comprueba que el actor o autor del evento de modificación no coincide con el agente de las tareas que ese requisito examina.
 
 Comprobación:
 python plantilla/compuerta_f1.py --db registro-copia.db --atacar r2
 
-Ataque positivo: el arquitecto (05) modifica un requisito cuyo agente es 02 → pasa.
-Ataque negativo: el ejecutor (02) intenta modificar su propio requisito → RAISE(ABORT).
+Ataques: R2+ aprobación válida con fichero= sha256= → pasa; R2- aprobación consumida (segundo UPDATE) → ABORT; R2- sin aprobación → ABORT; R2- formato sin fichero= sha256= → ABORT; R2- aprobación expirada (>24h) → ABORT; R2- aprobación de IA no-lead → ABORT.
 
 ## RAÍL 3 — Detector de ablandamiento con aprobación
 
@@ -40,14 +42,16 @@ Violaciones existentes que debe detectar: los 10 casos de la tabla B de la audit
 ## RAÍL 4 — Requisito firmado congelado
 
 EARS:
-Cuando exista al menos una tarea con progreso='hecha' que referencie un (plan_id, req_ref), el registro DEBE rechazar cualquier UPDATE de ears o comprobacion en ese requisito. Implementación: TRIGGER BEFORE UPDATE OF ears, comprobacion ON requisito que consulta la tabla tarea.
+Cuando exista al menos una tarea con progreso='hecha' que referencie un (plan_id, req_ref), el registro DEBE rechazar cualquier UPDATE de ears o comprobacion en ese requisito. Implementación: TRIGGER BEFORE UPDATE OF ears, comprobacion ON requisito que consulta la tabla tarea y la existencia de firma_tarea.
+
+R4b: DELETE de un requisito con tareas asignadas → RAISE(ABORT).
+
+R4c (evasión F3/F4): un UPDATE de req_ref o plan_id en tarea se bloquea cuando esa tarea tiene al menos un evento tarea_entregada o firma_tarea. Impide pivotar una tarea firmada a un requisito diferente para luego modificar el original desbloqueado.
 
 Comprobación:
 python plantilla/compuerta_f1.py --db registro-copia.db --atacar r4
 
-Ataque positivo: modificar un requisito sin tarea firmada → pasa.
-Ataque negativo: modificar un requisito con tarea hecha → RAISE(ABORT).
-Violación existente: M2/R0 reescrito 19 min después de la firma (ev 23653, tarea 52 ya hecha).
+Ataques: R4+ sin firma → pasa; R4- con firma → ABORT; R4- evasión por downgrade progreso → ABORT; R4b- DELETE con tareas → ABORT; R4c- cambiar req_ref firmada → ABORT; R4c+ cambiar req_ref sin firma ni entrega → pasa.
 
 ## RAÍL 5 — Ventana mínima entre modificación y entrega
 
@@ -63,15 +67,19 @@ Violaciones existentes: T06/R1 (12 s), T09/R1 (3 m 41 s), T03/R1 (27 m), M4/R0 (
 
 ## RAÍL 6 — Sin entrega no hay veredicto
 
+Alcance: solo gobierna eventos verificado cuyo detalle empieza por "tarea N" (N entero, con espacio o dos puntos). Cualquier otro veredicto (vistas, mediciones, planes) queda FUERA del raíl y pasa libremente (PRINCIPIO 2: no romper el molde).
+
 EARS:
-Cuando se intente insertar un evento con accion='verificado' para una tarea, y no exista un evento previo con accion='tarea_entregada' para esa misma tarea (identificada por 'tarea N' en el detalle del evento), el registro DEBE rechazar la inserción con RAISE(ABORT). Implementación: TRIGGER BEFORE INSERT ON evento WHEN NEW.accion='verificado', con tabla sesion_actual(tarea_id INTEGER) poblada por el script antes de la operación. El trigger consulta la existencia de tarea_entregada con el mismo plan_id y tarea_id.
+Cuando se intente insertar un evento con accion='verificado' cuyo detalle siga el formato "tarea N" (N dígito), y no exista un evento previo con accion='tarea_entregada' para esa misma tarea, el registro DEBE rechazar la inserción con RAISE(ABORT). Implementación: TRIGGER BEFORE INSERT ON evento con WHEN que filtra por formato "tarea N".
+
+R6b: si el detalle sigue el formato "tarea N" pero la tarea no existe en ese plan o el plan_id es NULL, el registro DEBE rechazar con RAISE(ABORT).
+
+Limitación conocida (F5): un detalle podría empezar por "tarea 79" pero contener el juicio de otra tarea en el cuerpo del texto. El script firmar.py ya ancla el formato, y el trigger solo parsea el número tras "tarea ". Se anota como límite aceptado.
 
 Comprobación:
 python plantilla/compuerta_f1.py --db registro-copia.db --atacar r6
 
-Ataque positivo: verificado de una tarea con tarea_entregada previa → pasa.
-Ataque negativo: verificado de una tarea sin tarea_entregada → RAISE(ABORT).
-Violaciones existentes: tareas 13 y 18 con veredicto CUMPLE sin tarea_entregada.
+Ataques: R6- sin tarea_entregada → ABORT; R6+ con entrega previa → pasa; R6b- tarea inexistente → ABORT; R6b- plan_id NULL → ABORT; R6+ veredicto sin formato "tarea N" → pasa.
 
 ## RAÍL 7 — Eliminar --delegado
 
@@ -83,5 +91,31 @@ python plantilla/compuerta_f1.py --db registro-copia.db --atacar r7
 
 Ataque positivo: grep sobre plantilla sin --delegado → pasa (0 líneas).
 Ataque negativo: grep sobre copia con --delegado inyectado → bloquea (≥1 línea).
+
+## PRINCIPIO 3 — El rastro lo deja la base
+
+Triggers AFTER INSERT y AFTER UPDATE OF ears, comprobacion en requisito insertan automáticamente un evento con el texto íntegro:
+
+- f1_rastro_requisito_insertado (AFTER INSERT): accion='requisito_insertado', actor='S:registro', detalle con ref=, ears=, comprobacion= (texto completo del INSERT).
+- f1_rastro_requisito_modificado (AFTER UPDATE): accion='requisito_modificado', actor='S:registro', detalle con ref=, antes_ears=, despues_ears=, antes_comprobacion=, despues_comprobacion= (texto ÍNTEGRO de OLD y NEW).
+
+Estos eventos habilitan el consumo de aprobación en R2: un cambio_requisito_aprobado debe ser posterior al último requisito_modificado para esa ref.
+
+Comprobación:
+python plantilla/compuerta_f1.py --db registro-copia.db --atacar rastro
+
+Ataques: RASTRO+ INSERT requisito genera evento requisito_insertado; RASTRO+ UPDATE requisito genera evento requisito_modificado.
+
+## RAÍL 8 — Evidencia de solo inserción
+
+EARS:
+La tabla evidencia DEBE ser de solo inserción: cualquier UPDATE o DELETE sobre evidencia DEBE ser rechazado con RAISE(ABORT) por triggers BEFORE UPDATE y BEFORE DELETE. Invalidar una evidencia se hace añadiendo una fila marcadora con su evento autorizado, nunca borrando ni sobreescribiendo. Implementación: dos triggers (f1_r8_evidencia_inmutable_u, f1_r8_evidencia_inmutable_d) instalados por compuerta_f1.py --aplicar. Si la tabla evidencia no existe en el esquema, los triggers se omiten sin error.
+
+Comprobación:
+python plantilla/compuerta_f1.py --db registro-copia.db --atacar r8
+
+Ataque positivo: INSERT en evidencia → pasa.
+Ataque negativo (UPDATE): UPDATE evidencia → RAISE(ABORT).
+Ataque negativo (DELETE): DELETE evidencia → RAISE(ABORT).
 
 ═══ FIRMA ═══ 08-caparazon / 260921
