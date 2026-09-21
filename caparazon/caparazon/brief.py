@@ -119,17 +119,26 @@ def tarea_de_entrega(estado: dict, tarea_id: int, cfg: dict, plan_id_objetivo: s
     ese plan, se puede trabajar y no está ya entregada pendiente de juicio. Devuelve (el estado con esa tarea/plan y su requisito, None) o
     (None, motivo). Lanza RegistroCaido."""
     plan_id = plan_id_objetivo or estado["plan"]["id"]
-    detalle = comun.leer_registro(cfg, "/plan/" + urllib.parse.quote(plan_id, safe=""))
+    ruta_plan = "/plan/" + urllib.parse.quote(plan_id, safe="")
     if plan_id_objetivo:
         ids_planes = [p["id"] for p in estado.get("planes_trabajables") or []] or [estado["plan"]["id"]]
         if plan_id_objetivo not in ids_planes:
+            try:
+                detalle = comun.leer_registro(cfg, ruta_plan)
+            except comun.RegistroCaido:
+                return None, f"el plan {plan_id_objetivo} no es un plan trabajable (no está en la caché y el registro no responde)"
             pl = detalle.get("plan") or {}
-            if pl.get("estado") != "abierto" or not str(pl.get("dueno") or "").startswith("H:"):
-                return None, f"el plan {plan_id_objetivo} no es un plan abierto con dueño H: ({pl.get('estado')}, {pl.get('dueno')})"
+            if not pl or pl.get("estado") != "abierto" or not str(pl.get("dueno") or "").startswith("H:"):
+                return None, (f"el plan {plan_id_objetivo} no existe en el registro" if not pl
+                              else f"el plan {plan_id_objetivo} no es un plan abierto con dueño H: ({pl.get('estado')}, {pl.get('dueno')})")
             prefijo = f"IA:{cfg['carpeta']}:"
             if not any(str(t.get("agente") or "").startswith(prefijo) and t.get("progreso") in PRIORIDAD
                        for t in detalle.get("tareas") or []):
                 return None, f"el plan {plan_id_objetivo} no tiene tareas trabajables de {prefijo}*"
+        else:
+            detalle = comun.leer_registro(cfg, ruta_plan)
+    else:
+        detalle = comun.leer_registro(cfg, ruta_plan)
     t = next((x for x in detalle.get("tareas") or [] if x.get("id") == tarea_id), None)
     if not t or not es_mia(t, cfg):
         return None, f"la tarea {tarea_id} no es una tarea de IA:{cfg['carpeta']}:* en {plan_id}"

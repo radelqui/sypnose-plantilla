@@ -448,6 +448,23 @@ def main() -> None:
         caso("B6.2l PostToolUse: la comprobación tal cual, en verde, en el worktree", dir_capa, "post_tool_use.py",
              {**post, "tool_name": "Bash", "tool_input": {"command": f"cd wt && {comprobacion}"}, "tool_response": salida_verde},
              env, lambda rc, o, e: rc == 0)
+        caso("F0.2a PostToolUse: la comprobación da '42 skipped in 0.20s' (0 passed)", dir_capa, "post_tool_use.py",
+             {**post, "tool_name": "Bash", "tool_input": {"command": f"cd wt && {comprobacion}"},
+              "tool_response": {"stdout": "42 skipped in 0.20s", "stderr": "", "interrupted": False, "isImage": False}}, env,
+             lambda rc, o, e: rc == 0)
+        caso("F0.2b Stop: ENTREGA con '42 skipped' sin ningún passed → bloqueo", dir_capa, "stop.py",
+             {**stop, "last_assistant_message": f"ENTREGA\nComprobación: {comprobacion}\nSalida: 42 skipped in 0.20s\nLECCIÓN: prueba"}, env,
+             lambda rc, o, e: rc == 2 and "ningún test passed" in e)
+        caso("F0.2c PostToolUse: la comprobación da '15 passed, 2 skipped in 1.5s' (tiene passed)", dir_capa, "post_tool_use.py",
+             {**post, "tool_name": "Bash", "tool_input": {"command": f"cd wt && {comprobacion}"},
+              "tool_response": {"stdout": "..............ss\n15 passed, 2 skipped in 1.5s", "stderr": "", "interrupted": False, "isImage": False}}, env,
+             lambda rc, o, e: rc == 0)
+        caso("F0.2d Stop: ENTREGA con '15 passed, 2 skipped' → la compuerta pytest acepta (falla solo por aviso)", dir_capa, "stop.py",
+             {**stop, "last_assistant_message": f"ENTREGA\nComprobación: {comprobacion}\nSalida: 15 passed, 2 skipped in 1.5s\nLECCIÓN: prueba"}, env,
+             lambda rc, o, e: rc == 2 and "ningún test passed" not in e and "falta el aviso" in e)
+        caso("F0.2e PostToolUse: restaurar ejecución verde original", dir_capa, "post_tool_use.py",
+             {**post, "tool_name": "Bash", "tool_input": {"command": f"cd wt && {comprobacion}"}, "tool_response": salida_verde},
+             env, lambda rc, o, e: rc == 0)
         caso("B6.3 Stop: ENTREGA con salida inventada", dir_capa, "stop.py",
              {**stop, "last_assistant_message": f"ENTREGA\nComprobación: {comprobacion}\nSalida: 20 passed in 0.50s\nLECCIÓN: prueba"}, env,
              lambda rc, o, e: rc == 2 and "no es la salida real" in e)

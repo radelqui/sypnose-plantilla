@@ -206,6 +206,10 @@ def validar(bloque: str, estado: dict, cfg: dict):
         marca = FALLO.search(ultima["salida"])
         if marca:
             fallos.append(f"la salida real de la comprobación indica fallo («{marca.group(0).strip()}»)")
+        if not marca and re.search(r"(?i)\bpytest\b|python\s+-m\s+pytest", ejecutable(comprobacion)):
+            res = resumen_de(ultima["salida"])
+            if res and not re.search(r"\b\d+\s+passed\b", res):
+                fallos.append(f"la comprobación es pytest pero la salida no muestra ningún test passed («{res}»)")
         esperado = esperado_de(comprobacion)
         motivo = cumple_esperado(esperado, ultima["salida"]) if esperado else None
         if motivo:
