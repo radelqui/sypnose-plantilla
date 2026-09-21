@@ -6,8 +6,11 @@ hace backup_registro() ANTES de escribir, y registra evento con VIEJO/NUEVO/sha/
 Idempotente: si EARS y comprobación ya coinciden, 0 cambios.
 Si el requisito cambia y hay tareas en espera_firma o hecha, aborta (requiere decisión humana).
 
+F0.3: valida comprobacion (rechaza prosa, 'true', pytest sin --cov-fail-under).
+       --auditar-deuda: listar requisitos heredados no conformes sin reescribirlos.
+
     python3 cargar_requisito.py --db ~/sypnose-f1/registry.db T01 R1 specs/T01/spec.md
-    python3 cargar_requisito.py --db ~/sypnose-f1/registry.db T01 R1 specs/T01/spec.md --dry-run
+    python3 cargar_requisito.py --db ~/sypnose-f1/registry.db --auditar-deuda
 """
 from __future__ import annotations
 
@@ -31,6 +34,14 @@ from barrera import (
 ACTOR = "IA:05-arquitecto-sypnose:claude-opus-4-6"
 OFERTA_YAML = PLANTILLA_DIR / "oferta.yaml"
 
+EJECUTABLES_CONOCIDOS = frozenset({
+    "python3", "python", "pytest", "bash", "sh", "node", "npm", "npx",
+    "make", "curl", "wget", "grep", "egrep", "fgrep", "sqlite3", "git",
+    "gh", "docker", "test", "diff", "sort", "wc", "awk", "sed", "find",
+    "cat", "echo", "cd", "ls", "head", "tail",
+    "SELECT", "EXPLAIN", "INSERT",
+})
+
 
 def ahora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -41,6 +52,64 @@ def cargar_yaml_mapas() -> tuple[dict, dict]:
     plan_por_linea = datos.get("plan_por_linea", {})
     roles_por_linea = datos.get("roles_por_linea", {})
     return plan_por_linea, roles_por_linea
+
+
+def validar_comprobacion(comp: str, exigir_cobertura: bool = True) -> tuple[bool, str]:
+    """Valida que la comprobacion sea un comando ejecutable.
+    Rechaza: vacia, literal 'true', prosa, pytest sin --cov-fail-under.
+    Returns (ok, motivo).
+    """
+    comp = comp.strip()
+    if not comp:
+        return False, "comprobacion vacia"
+    if comp == "true":
+        return False, "literal 'true' no demuestra nada"
+    tokens = comp.split()
+    primer_token = tokens[0]
+    if "=" in primer_token and not primer_token.startswith("-"):
+        if len(tokens) > 1:
+            primer_token = tokens[1]
+    pt = primer_token.strip('"\'')
+    es_ejecutable = (
+        pt in EJECUTABLES_CONOCIDOS
+        or "/" in pt
+        or "\\" in pt
+        or pt.startswith("~")
+        or pt.endswith(".py")
+        or pt.endswith(".sh")
+        or pt.endswith(".mjs")
+        or pt.endswith(".js")
+        or pt.endswith(".exe")
+    )
+    if not es_ejecutable:
+        return False, f"primer token '{primer_token}' no es ejecutable — parece prosa"
+    if exigir_cobertura and "--cov-fail-under" not in comp:
+        ejecuta_pytest = (
+            pt == "pytest"
+            or (pt in ("python", "python3") and "-m pytest" in comp)
+            or (pt.endswith(".exe") and "-m pytest" in comp)
+        )
+        if ejecuta_pytest:
+            return False, "pytest sin --cov-fail-under: bateria incompleta para tarea de codigo"
+    return True, "ok"
+
+
+def auditar_deuda(conn) -> list[tuple[str, str, str, str]]:
+    """Escanea todos los requisitos y devuelve los no conformes.
+    Returns list of (plan_id, ref, comprobacion, motivo).
+    """
+    rows = conn.execute(
+        "SELECT plan_id, ref, comprobacion FROM requisito ORDER BY plan_id, ref"
+    ).fetchall()
+    deuda = []
+    for plan_id, ref, comp in rows:
+        if not comp:
+            deuda.append((plan_id, ref, "(NULL)", "comprobacion vacia"))
+            continue
+        ok, motivo = validar_comprobacion(comp, exigir_cobertura=True)
+        if not ok:
+            deuda.append((plan_id, ref, comp[:80], motivo))
+    return deuda
 
 
 def obtener_spec_sha(spec_rel: str) -> str:
@@ -111,19 +180,40 @@ def extraer_comprobacion(seccion: str) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Carga requisito desde spec.md al registro")
-    ap.add_argument("sigla", help="sigla de la línea, ej. T01")
-    ap.add_argument("linea", help="referencia del requisito, ej. R1")
-    ap.add_argument("spec", help="ruta al spec.md relativa a plantilla/")
+    ap.add_argument("sigla", nargs="?", help="sigla de la línea, ej. T01")
+    ap.add_argument("linea", nargs="?", help="referencia del requisito, ej. R1")
+    ap.add_argument("spec", nargs="?", help="ruta al spec.md relativa a plantilla/")
     ap.add_argument("--db", required=True, help="ruta a registry.db")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--actor", default=ACTOR)
     ap.add_argument("--delegado", action="store_true",
                     help="omite validación de autoría (Chat: trailer) para specs escritos por delegación del lead")
+    ap.add_argument("--sin-exigir-cobertura", action="store_true",
+                    help="no exigir --cov-fail-under en pytest (para tareas no-codigo)")
+    ap.add_argument("--auditar-deuda", action="store_true",
+                    help="listar requisitos existentes con comprobacion no conforme")
     args = ap.parse_args()
 
     db_path = Path(args.db).expanduser().resolve()
     if not db_path.exists():
         sys.exit(f"[FALLO] {db_path} no existe")
+
+    if args.auditar_deuda:
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("PRAGMA journal_mode=WAL")
+        deuda = auditar_deuda(conn)
+        conn.close()
+        if not deuda:
+            print("[OK] 0 requisitos no conformes")
+            return
+        print(f"[DEUDA] {len(deuda)} requisitos no conformes:")
+        for plan_id, ref, comp, motivo in deuda:
+            print(f"  {plan_id:16} {ref:4} {motivo}")
+            print(f"{'':20}     comprobacion: {comp}")
+        sys.exit(1)
+
+    if not args.sigla or not args.linea or not args.spec:
+        sys.exit("[FALLO] se requiere sigla, linea y spec (usa --auditar-deuda para auditar sin cargar)")
 
     spec_path = PLANTILLA_DIR / args.spec
     if not spec_path.exists():
@@ -173,6 +263,13 @@ def main() -> None:
     print(f"[ref] {ref}")
     print(f"[ears] {ears[:80]}{'...' if len(ears) > 80 else ''}")
     print(f"[comprobacion] {comprobacion}")
+
+    ok_comp, motivo_comp = validar_comprobacion(
+        comprobacion, exigir_cobertura=not args.sin_exigir_cobertura
+    )
+    if not ok_comp:
+        sys.exit(f"[FALLO] comprobacion rechazada: {motivo_comp}\n  comprobacion: {comprobacion}")
+    print("[validacion] OK")
 
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA journal_mode=WAL")
