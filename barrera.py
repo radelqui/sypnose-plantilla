@@ -13,6 +13,8 @@ Decisión lead 15-sep-2026. Corrección 07-verificador: oferta.yaml modificable 
 from __future__ import annotations
 
 import hashlib
+import os
+import platform
 import re
 import sqlite3
 import subprocess
@@ -260,3 +262,44 @@ def verificar_d7_auto_verificacion(conn, tarea_id: int, verificador: str) -> Non
 
 def verificar_oferta_canonica(conn, h: str) -> None:
     verificar_canonicos_registrados(conn)
+
+
+def procedencia() -> str:
+    """F0.5 R6: host, usuario de sistema y pid del proceso.
+
+    Unico punto de insercion para trazabilidad de escrituras al registro.
+    Todos los scripts DEBEN incluir esta cadena en el detalle de sus eventos
+    via registrar_evento() o manualmente.
+    """
+    return f"host={platform.node()} user={os.getenv('USER', os.getenv('USERNAME', '?'))} pid={os.getpid()}"
+
+
+def registrar_evento(
+    conn: sqlite3.Connection,
+    cuando: str,
+    actor: str,
+    accion: str,
+    detalle: str,
+    plan_id: str | None = None,
+    nodo_id: str | None = None,
+) -> int:
+    """F0.5 R6: punto unico de INSERT INTO evento con procedencia automatica.
+
+    Devuelve el rowid del evento insertado. La procedencia (host/user/pid) se
+    anade al final del detalle sin que el script llamante tenga que repetirlo.
+    """
+    detalle_completo = f"{detalle} [{procedencia()}]"
+    cols = ["cuando", "actor", "accion", "detalle"]
+    vals = [cuando, actor, accion, detalle_completo]
+    if plan_id is not None:
+        cols.append("plan_id")
+        vals.append(plan_id)
+    if nodo_id is not None:
+        cols.append("nodo_id")
+        vals.append(nodo_id)
+    placeholders = ",".join("?" for _ in cols)
+    cur = conn.execute(
+        f"INSERT INTO evento ({','.join(cols)}) VALUES ({placeholders})",
+        vals,
+    )
+    return cur.lastrowid
