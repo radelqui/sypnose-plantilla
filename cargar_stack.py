@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,12 +33,22 @@ def ahora() -> str:
 
 
 def evidencia_existe(ruta_evidencia: str, bloque: str) -> bool:
-    if bloque == "solucion":
-        base = REPO_RAG
-    else:
-        base = PLANTILLA_DIR
+    bases = [REPO_RAG, PLANTILLA_DIR] if bloque == "solucion" else [PLANTILLA_DIR, REPO_RAG]
     fichero = ruta_evidencia.split("@")[0]
-    return (base / fichero).exists()
+    if any((base / fichero).exists() for base in bases):
+        return True
+    # Ultimo recurso: la evidencia lleva pin @commit; comprobar el objeto git
+    # (p. ej. esqueleto en rama chat/02-backend-api todavia sin fusionar a main).
+    if "@" in ruta_evidencia:
+        commit = ruta_evidencia.split("@", 1)[1]
+        for base in bases:
+            r = subprocess.run(
+                ["git", "-C", str(base), "cat-file", "-e", f"{commit}:{fichero}"],
+                capture_output=True,
+            )
+            if r.returncode == 0:
+                return True
+    return False
 
 
 def main():
@@ -97,7 +108,7 @@ def main():
 
             todas_existen = all(evidencia_existe(e, bloque) for e in evidencias) if evidencias else False
             certeza = "observado" if todas_existen else "propuesto"
-            estado_final = estado_yaml if todas_existen or estado_yaml == "opcional-no-implementado" else "declarado-sin-evidencia"
+            estado_final = estado_yaml if todas_existen or estado_yaml.startswith("opcion-") or estado_yaml == "opcional-no-implementado" else "declarado-sin-evidencia"
 
             if args.dry_run:
                 print(f"  [dry-run] {nodo_id}: {nombre} ({grupo}) certeza={certeza} estado={estado_final}")
@@ -164,19 +175,29 @@ def main():
             hecho_por_str = ", ".join(hecho_por_raw) if hecho_por_raw else ""
             verificado_en_str = ", ".join(str(v) for v in verificado_en_raw) if verificado_en_raw else ""
             decide_banco_str = entry.get("decide_banco", "")
+            decide_banco_pendiente = "false" if decide_banco_str.startswith("N/A") or not decide_banco_str else "true"
+            decide_banco_texto = "" if decide_banco_str.startswith("N/A") else decide_banco_str
             que_cambia_raw = entry.get("que_cambia", [])
             que_cambia_str = ", ".join(que_cambia_raw) if isinstance(que_cambia_raw, list) else str(que_cambia_raw or "")
             equipo_str = "oferta" if bloque == "solucion" else "plantilla"
             for campo, valor in [("para_que", para_que), ("por_que", por_que), ("grupo", grupo), ("estado", estado_final),
-                                 ("decide_banco", decide_banco_str), ("que_cambia", que_cambia_str), ("equipo", equipo_str),
+                                 ("decide_banco", decide_banco_texto), ("decide_banco_pendiente", decide_banco_pendiente),
+                                 ("que_cambia", que_cambia_str), ("equipo", equipo_str),
                                  ("hecho_por", hecho_por_str), ("verificado_en", verificado_en_str)]:
-                rc = conn.execute(
-                    "INSERT OR IGNORE INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando, evidencia, vigente) "
+                existing = conn.execute(
+                    "SELECT id, valor FROM afirmacion WHERE nodo_id=? AND campo=? AND vigente=1",
+                    (nodo_id, campo),
+                ).fetchone()
+                if existing and existing[1] == valor:
+                    continue
+                if existing:
+                    conn.execute("UPDATE afirmacion SET vigente=0 WHERE id=?", (existing[0],))
+                conn.execute(
+                    "INSERT INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando, evidencia, vigente) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
                     (nodo_id, campo, valor, certeza, FUENTE, args.actor, ahora(), ev_texto),
-                ).rowcount
-                if rc == 1:
-                    afirmaciones += 1
+                )
+                afirmaciones += 1
 
             print(f"  {nodo_id}: {nombre} [{grupo}] certeza={certeza} estado={estado_final}")
 
@@ -186,14 +207,21 @@ def main():
     for capa, texto in portada.items():
         campo = f"portada_{capa}"
         if not args.dry_run:
-            rc = conn.execute(
-                "INSERT OR IGNORE INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando, evidencia, vigente) "
+            existing = conn.execute(
+                "SELECT id, valor FROM afirmacion WHERE nodo_id=? AND campo=? AND vigente=1",
+                (SOL_ID, campo),
+            ).fetchone()
+            if existing and existing[1] == texto:
+                continue
+            if existing:
+                conn.execute("UPDATE afirmacion SET vigente=0 WHERE id=?", (existing[0],))
+            conn.execute(
+                "INSERT INTO afirmacion (nodo_id, campo, valor, certeza, fuente, actor_id, cuando, evidencia, vigente) "
                 "VALUES (?, ?, ?, 'observado', ?, ?, ?, 'oferta.yaml#portada', 1)",
                 (SOL_ID, campo, texto, FUENTE, args.actor, ahora()),
-            ).rowcount
-            if rc == 1:
-                portada_count += 1
-                afirmaciones += 1
+            )
+            portada_count += 1
+            afirmaciones += 1
         else:
             print(f"  [dry-run] portada {campo}: {texto[:60]}...")
             portada_count += 1

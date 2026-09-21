@@ -1,4 +1,4 @@
-"""TRASPASO-4 A4: firma humana, firma de tareas y nombre público.
+"""TRASPASO-4 A4: firma humana, firma de tareas y nombre publico.
 
     python3 firmar.py firma   --db DB --nodo sol:coforge:rag-banking-agent --actor H:carlos
     python3 firmar.py tarea   --db DB --plan PLAN-CS-T01 --ids 9 33 48 --actor H:carlos --detalle "texto"
@@ -38,6 +38,49 @@ def conectar(db_str: str) -> tuple[sqlite3.Connection, Path]:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 8000")
     return conn, db_path
+
+
+def verificar_evento_verificado(conn, tarea_id):
+    """F0.1 D7: exige evento verificado posterior a tarea_entregada con
+    actor == tarea.verificada_por. Sin este evento la firma no procede."""
+    row = conn.execute(
+        "SELECT verificada_por, agente, plan_id FROM tarea WHERE id=?", (tarea_id,)
+    ).fetchone()
+    if not row:
+        return False, f"tarea {tarea_id} no existe"
+    vp, agente, plan_id = row
+    if not vp:
+        return False, "verificada_por es NULL"
+
+    entrega = conn.execute(
+        "SELECT id, cuando FROM evento WHERE accion='tarea_entregada' "
+        "AND plan_id=? AND detalle LIKE ? ORDER BY id DESC LIMIT 1",
+        (plan_id, f"tarea {tarea_id} %"),
+    ).fetchone()
+    if not entrega:
+        return False, f"no hay evento tarea_entregada para tarea {tarea_id} en {plan_id}"
+
+    verificado = conn.execute(
+        "SELECT id, actor, cuando, detalle FROM evento WHERE accion='verificado' "
+        "AND plan_id=? AND detalle LIKE ? AND cuando > ? ORDER BY id DESC LIMIT 1",
+        (plan_id, f"tarea {tarea_id} %", entrega[1]),
+    ).fetchone()
+    if not verificado:
+        return False, (
+            f"no hay evento verificado posterior a la entrega (evento {entrega[0]}) "
+            f"para tarea {tarea_id} en {plan_id}"
+        )
+    detalle_v = verificado[3] if len(verificado) > 3 else ""
+    if detalle_v and ": NO CUMPLE" in detalle_v:
+        return False, (
+            f"veredicto NO CUMPLE para tarea {tarea_id} (evento {verificado[0]})"
+        )
+    if verificado[1] != vp:
+        return False, (
+            f"verificada_por={vp} pero evento verificado {verificado[0]} "
+            f"es de actor {verificado[1]}"
+        )
+    return True, f"evento verificado {verificado[0]} por {verificado[1]} posterior a entrega {entrega[0]}"
 
 
 def cmd_firma(args):
@@ -151,7 +194,7 @@ def cmd_nombre(args):
 
 
 def cmd_tarea(args):
-    """Firma (espera_firma → hecha) una o más tareas con actor humano (D4)."""
+    """Firma (espera_firma -> hecha) una o mas tareas con actor humano (D4)."""
     verificar_repo_limpio()
     conn, db_path = conectar(args.db)
 
@@ -177,8 +220,13 @@ def cmd_tarea(args):
             sys.exit(f"[FALLO] tarea {tid} sin verificada_por (D7)")
         if t_verif == t_agente:
             sys.exit(f"[FALLO] tarea {tid} verificada_por={t_verif} == agente (D7: quien ejecuta no juzga)")
+
+        ok_ev, motivo_ev = verificar_evento_verificado(conn, t_id)
+        if not ok_ev:
+            sys.exit(f"[FALLO] tarea {tid} D7 evento verificado: {motivo_ev}")
+
         tareas.append((t_id, t_ref, t_titulo, t_verif))
-        print(f"[validada] tarea {t_id} ({t_ref}): {t_titulo} — verificada por {t_verif}")
+        print(f"[validada] tarea {t_id} ({t_ref}): {t_titulo} — verificada por {t_verif} ({motivo_ev})")
 
     b = backup(conn, db_path)
     print(f"[backup] {b}")
@@ -212,7 +260,7 @@ def cmd_listar(args):
     print(f"Firmas vigentes: {len(firmas)}")
     for nid, val, cuando in firmas:
         print(f"  {nid}: {val}")
-    print(f"\nNombres públicos: {len(nombres)}")
+    print(f"\nNombres publicos: {len(nombres)}")
     for nid, val in nombres:
         print(f"  {nid} → {val}")
 
@@ -238,7 +286,7 @@ def main():
     p_nombre = sub.add_parser("nombre")
     p_nombre.add_argument("--db", required=True)
     p_nombre.add_argument("--actor", required=True, help="actor (IA:02-backend-api:... o H:carlos)")
-    p_nombre.add_argument("--nombre", required=True, help="nombre público para la vista")
+    p_nombre.add_argument("--nombre", required=True, help="nombre publico para la vista")
 
     p_list = sub.add_parser("listar")
     p_list.add_argument("--db", required=True)

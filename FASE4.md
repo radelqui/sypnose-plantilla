@@ -46,8 +46,9 @@ commit-msg que acepta merges de origin sin trailers).
 - Instalador idempotente y reversible.
 - SessionStart y UserPromptSubmit comprobados en una sesión real de Claude Code.
 - Vista previa real del brief de 02 (§4.7).
-- Repo `plantilla`, rama **`chat/08-caparazon` en origin, punta `a89d1e6`** (B19); worktree propio `C:\MICD\Coforge Santander\08-caparazon\wt-plantilla`.
-  main = **9f891bb** (merge B19 a89d1e6). Instalado en 01 (modo real). B19 pendiente de verificación por 07.
+- Repo `plantilla`, rama **`chat/08-caparazon` en origin, punta `6205065`** (B25); worktree propio `C:\MICD\Coforge Santander\08-caparazon\wt-plantilla`.
+  main = **ee2cb5b** (cherry-pick B25). Instalado en 01-04 (modo real). B24 verificado por 07 (eventos 23861-23862).
+  B25 verificado por 07 (eventos 23863-23864).
 - **Caparazón instalado en modo real** en 01-git-cicd (evento 22786), 03-datos-rag (22789) y 04-agentes (22790), por delegación del
   lead (22676). 02 reinstalada con B13 por el arquitecto; verificada por 08 en solo lectura (§4.4).
 

@@ -1,0 +1,33 @@
+services:
+  demo-db:
+    image: pgvector/pgvector:pg16
+    container_name: demo-rag-db
+    environment:
+      POSTGRES_DB: banco
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports: ["5433:5432"]
+    volumes:
+      - ../rag-banking-agent/scripts/init_db.sql:/docker-entrypoint-initdb.d/01_init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  demo-rag:
+    container_name: demo-rag-api
+    build:
+      context: ../rag-banking-agent
+      dockerfile: Dockerfile
+    depends_on:
+      demo-db: { condition: service_healthy }
+    environment:
+      USE_FAKE_ENGINE: "1"
+      APP_DATABASE_URL: postgresql+asyncpg://postgres:postgres@demo-db:5432/banco
+      LLAMAINDEX_DATABASE_URL: postgresql+asyncpg://postgres:postgres@demo-db:5432/banco
+      IDENTITY_HEADER: X-Customer-Id
+    ports: ["8080:8000"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    restart: unless-stopped

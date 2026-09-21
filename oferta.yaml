@@ -495,16 +495,76 @@ stack:
       que_cambia: [requirements.txt (temporalio), app/workflows/]
       hecho_por: []
       verificado_en: []
-    - id: opentelemetry
-      nombre: OpenTelemetry
+    - id: vllm
+      nombre: vLLM
       grupo: opcional
-      para_que: Observabilidad distribuida (traces, métricas, logs) estándar CNCF
-      por_que: Instrumentación vendor-neutral; el banco elige el backend (Datadog, Grafana, etc.)
+      para_que: Motor de inferencia autohospedado tras las mismas variables del contrato
+      por_que: El banco sirve el modelo en su propia infra; el microservicio no cambia
+      lineas: [T02]
+      evidencia: []
+      estado: opcion-no-poc
+      decide_banco: "Motor de inferencia: vLLM, TGI, SGLang, Ollama, endpoint interno del banco"
+      que_cambia: ["nada de código: endpoint y variables del contrato (OPENAI_API_BASE/OPENAI_API_KEY por nombre, valor inyectado por el banco)"]
+      hecho_por: []
+      verificado_en: []
+    - id: openhands
+      nombre: OpenHands
+      grupo: opcional
+      para_que: Runtime de agentes multivendedor para operar el desarrollo
+      por_que: El caparazón corre sobre Claude Code hoy; el molde y el registro no dependen del runtime
+      lineas: [T07, T09]
+      evidencia: []
+      estado: opcion-no-poc
+      decide_banco: "Runtime de agentes: OpenHands, Claude Code, Codex CLI, herramienta interna del banco"
+      que_cambia: ["el caparazón de hooks se adapta al runner elegido; molde y registro (oferta.yaml, registry.db) sin cambios"]
+      hecho_por: []
+      verificado_en: []
+    - id: apache-age
+      nombre: Apache AGE
+      grupo: opcional
+      para_que: Grafo junto a pgvector en la misma base Postgres
+      por_que: El grafo que hoy alimenta graphify viviría en la misma base sin otro motor
+      lineas: [T08]
+      evidencia: []
+      estado: opcion-no-poc
+      decide_banco: "Grafo: Apache AGE, Neo4j, ArangoDB, sin grafo (solo pgvector)"
+      que_cambia: ["extensión AGE en la misma base Postgres; el grafo que hoy alimenta graphify pasa a openCypher"]
+      hecho_por: []
+      verificado_en: []
+    - id: rtk-agentmemory
+      nombre: RTK + agentmemory
+      grupo: opcional
+      para_que: Optimización de tokens y memoria entre agentes
+      por_que: Capa junto al coste por turno que ya medimos en el registro
+      lineas: [T12]
+      evidencia: []
+      estado: opcion-no-poc
+      decide_banco: "Optimización/memoria: RTK, agentmemory, memoria nativa del SDK, sin capa"
+      que_cambia: ["capa de optimización junto al coste por turno ya medido (eventos con tokens_turno/coste_turno_usd)"]
+      hecho_por: []
+      verificado_en: []
+    - id: prometheus-observability
+      nombre: "Observabilidad: métricas Prometheus y logs estructurados"
+      grupo: cicd-calidad
+      para_que: Métricas de servicio (Counter, Histogram) en /metrics y logs JSON estructurados por petición
+      por_que: Prometheus es el estándar de facto en Kubernetes; los logs JSON se indexan sin parseo
+      lineas: [T05]
+      evidencia: [microservicio/esqueleto/app/observability.py@987bd2f]
+      estado: implementado
+      decide_banco: "N/A (Prometheus es el scraping estándar; backend: Grafana, Datadog, herramienta interna)"
+      que_cambia: []
+      hecho_por: [02-backend-api]
+      verificado_en: [61]
+    - id: opentelemetry
+      nombre: "OpenTelemetry (trazas hacia el colector del banco)"
+      grupo: opcional
+      para_que: Trazas distribuidas para correlacionar peticiones entre servicios
+      por_que: Instrumentación vendor-neutral; el banco elige el backend
       lineas: [T05]
       evidencia: []
-      estado: opcion-preparada
+      estado: opcion-no-poc
       decide_banco: "Backend: Datadog, Grafana Cloud, Elastic APM, Jaeger, herramienta interna"
-      que_cambia: [requirements.txt (opentelemetry-*), app/core/telemetry.py, microservicio/esqueleto/app/main.py]
+      que_cambia: ["instrumentar tres spans (búsqueda, llamada al modelo, herramientas) sin PII y exportar por OTLP a su colector; variables OTEL_* por nombre"]
       hecho_por: []
       verificado_en: []
   plantilla:
@@ -550,7 +610,7 @@ stack:
       para_que: Servidor MCP que expone lectura/escritura del registro a los chats
       por_que: Los chats no hacen SSH directo; el MCP aplica permisos por rol
       lineas: [T09]
-      evidencia: [caparazon/plantillas/mcp.json.jinja]
+      evidencia: [caparazon/plantillas/mcp.json@sypnose]
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
@@ -562,7 +622,7 @@ stack:
       para_que: Servidor MCP para la base de conocimiento del proyecto
       por_que: Lecciones aprendidas, notificaciones inter-agente, búsqueda semántica
       lineas: [T09]
-      evidencia: [caparazon/plantillas/mcp.json.jinja]
+      evidencia: [caparazon/plantillas/mcp.json@knowledge-hub]
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
@@ -610,7 +670,7 @@ stack:
       para_que: Base de conocimiento con alertas, feedback y lecciones del proyecto
       por_que: Mejora continua; cada arquitecto reporta §4.1
       lineas: [T09]
-      evidencia: [caparazon/plantillas/mcp.json.jinja@knowledge-hub]
+      evidencia: [caparazon/plantillas/mcp.json@knowledge-hub]
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
@@ -646,7 +706,7 @@ stack:
       para_que: Tests como entrega; CI bloquea merge si cobertura < 85%
       por_que: Regla del banco; cov-fail-under=85 en pipeline
       lineas: [T07, T14]
-      evidencia: [.github/workflows/ci.yml@pytest --cov, .github/workflows/ci.yml@cov-fail-under]
+      evidencia: [microservicio/esqueleto/.github/workflows/ci.yml@--cov-fail-under=85]
       estado: implementado
       decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
       que_cambia: []
@@ -682,7 +742,7 @@ stack:
       para_que: Decisiones numeradas y fechadas en PLAN.md y TRASPASO-* como ADR ligero
       por_que: Auditoría de decisiones de arquitectura sin herramienta externa
       lineas: [T09]
-      evidencia: [TRASPASO.md, TRASPASO-5.md]
+      evidencia: [FASE4.md, FASE-COMPUERTA-D7.md, FASE-COMPUERTA-D7B.md]
       estado: implementado
       decide_banco: "N/A (práctica de ingeniería, no tecnología sustituible)"
       que_cambia: []
@@ -706,12 +766,12 @@ stack:
       para_que: "La fábrica SYPNOSE corre sobre Claude Code, construido sobre el Claude Agent SDK: agentes por chat con hooks, MCP y permisos"
       por_que: Cada chat es un agente con cerco, brief, commit-msg y MCP (registro + KB)
       lineas: [T06, T09]
-      evidencia: [caparazon/plantillas/mcp.json.jinja, caparazon/caparazon/post_tool_use.py, caparazon/caparazon/cerco.py]
+      evidencia: [caparazon/plantillas/mcp.json, caparazon/instalar_caparazon.py, caparazon/caparazon/post_tool_use.py, caparazon/caparazon/pre_tool_use.py, caparazon/caparazon/cerco.py]
       estado: implementado
       decide_banco: "N/A (artefacto de proceso de desarrollo, no entra en producción)"
       que_cambia: []
       hecho_por: [IA:08-caparazon:claude-sonnet-5, IA:05-arquitecto-sypnose:claude-opus-4-6]
-      verificado_en: [23750, 23747, 23453]
+      verificado_en: [22702, 22722, 22737, 23334, 23367, 23452, 23749, 23809, 23861, 23863]
 roles_por_linea:
   T01: {rol: 02-backend-api, modelo: claude-sonnet-5}
   T02: {rol: 04-agentes, modelo: claude-sonnet-5}
