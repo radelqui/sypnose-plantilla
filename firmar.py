@@ -44,31 +44,36 @@ def verificar_evento_verificado(conn, tarea_id):
     """F0.1 D7: exige evento verificado posterior a tarea_entregada con
     actor == tarea.verificada_por. Sin este evento la firma no procede."""
     row = conn.execute(
-        "SELECT verificada_por, agente FROM tarea WHERE id=?", (tarea_id,)
+        "SELECT verificada_por, agente, plan_id FROM tarea WHERE id=?", (tarea_id,)
     ).fetchone()
     if not row:
         return False, f"tarea {tarea_id} no existe"
-    vp, agente = row
+    vp, agente, plan_id = row
     if not vp:
         return False, "verificada_por es NULL"
 
     entrega = conn.execute(
         "SELECT id, cuando FROM evento WHERE accion='tarea_entregada' "
-        "AND detalle LIKE ? ORDER BY id DESC LIMIT 1",
-        (f"tarea {tarea_id} %",),
+        "AND plan_id=? AND detalle LIKE ? ORDER BY id DESC LIMIT 1",
+        (plan_id, f"tarea {tarea_id} %"),
     ).fetchone()
     if not entrega:
-        return False, f"no hay evento tarea_entregada para tarea {tarea_id}"
+        return False, f"no hay evento tarea_entregada para tarea {tarea_id} en {plan_id}"
 
     verificado = conn.execute(
-        "SELECT id, actor, cuando FROM evento WHERE accion='verificado' "
-        "AND detalle LIKE ? AND cuando > ? ORDER BY id DESC LIMIT 1",
-        (f"%tarea {tarea_id}%", entrega[1]),
+        "SELECT id, actor, cuando, detalle FROM evento WHERE accion='verificado' "
+        "AND plan_id=? AND detalle LIKE ? AND cuando > ? ORDER BY id DESC LIMIT 1",
+        (plan_id, f"tarea {tarea_id} %", entrega[1]),
     ).fetchone()
     if not verificado:
         return False, (
             f"no hay evento verificado posterior a la entrega (evento {entrega[0]}) "
-            f"para tarea {tarea_id}"
+            f"para tarea {tarea_id} en {plan_id}"
+        )
+    detalle_v = verificado[3] if len(verificado) > 3 else ""
+    if detalle_v and ": NO CUMPLE" in detalle_v:
+        return False, (
+            f"veredicto NO CUMPLE para tarea {tarea_id} (evento {verificado[0]})"
         )
     if verificado[1] != vp:
         return False, (

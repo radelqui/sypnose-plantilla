@@ -135,9 +135,13 @@ def main():
         print("\n[PRIMERA VEZ] no hay esquema_hash registrado")
 
     if not args.registrar:
-        print("\n[INFO] usa --registrar para escribir el hash nuevo en la BD")
+        if reg:
+            print("\n[CAMBIO DETECTADO] hash difiere del registrado — exit 1")
+        else:
+            print("\n[SIN LINEA BASE] esquema no registrado — exit 1")
+        print("[INFO] usa --registrar para escribir el hash nuevo en la BD")
         conn.close()
-        return
+        sys.exit(1)
 
     backup_registro(conn, db_path, "pre-esquema-hash")
 
