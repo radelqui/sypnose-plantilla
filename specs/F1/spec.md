@@ -84,4 +84,16 @@ python plantilla/compuerta_f1.py --db registro-copia.db --atacar r7
 Ataque positivo: grep sobre plantilla sin --delegado → pasa (0 líneas).
 Ataque negativo: grep sobre copia con --delegado inyectado → bloquea (≥1 línea).
 
+## RAÍL 8 — Evidencia de solo inserción
+
+EARS:
+La tabla evidencia DEBE ser de solo inserción: cualquier UPDATE o DELETE sobre evidencia DEBE ser rechazado con RAISE(ABORT) por triggers BEFORE UPDATE y BEFORE DELETE. Invalidar una evidencia se hace añadiendo una fila marcadora con su evento autorizado, nunca borrando ni sobreescribiendo. Implementación: dos triggers (f1_r8_evidencia_inmutable_u, f1_r8_evidencia_inmutable_d) instalados por compuerta_f1.py --aplicar. Si la tabla evidencia no existe en el esquema, los triggers se omiten sin error.
+
+Comprobación:
+python plantilla/compuerta_f1.py --db registro-copia.db --atacar r8
+
+Ataque positivo: INSERT en evidencia → pasa.
+Ataque negativo (UPDATE): UPDATE evidencia → RAISE(ABORT).
+Ataque negativo (DELETE): DELETE evidencia → RAISE(ABORT).
+
 ═══ FIRMA ═══ 08-caparazon / 260921

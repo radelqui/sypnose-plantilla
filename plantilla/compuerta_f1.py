@@ -62,57 +62,47 @@ def toca_requisito(detalle: str) -> bool:
 
 # ── TRIGGERS ───────────────────────────────────────────────────
 
-SESION_ACTUAL_DDL = """
-CREATE TABLE IF NOT EXISTS sesion_actual (
-  actor    TEXT NOT NULL DEFAULT '',
-  autor    TEXT NOT NULL DEFAULT '',
-  tarea_id INTEGER
-);
-"""
-
 TRIGGER_R2 = """
 CREATE TRIGGER IF NOT EXISTS f1_r2_examinado_no_reescribe
 BEFORE UPDATE OF ears, comprobacion ON requisito
 WHEN EXISTS (
-  SELECT 1 FROM tarea t, sesion_actual s
+  SELECT 1 FROM tarea t
   WHERE t.plan_id = OLD.plan_id AND t.req_ref = OLD.ref
     AND t.progreso NOT IN ('hecha', 'retirada')
-    AND (
-      CASE WHEN s.actor LIKE 'IA:%'
-        THEN LOWER(SUBSTR(s.actor, 4, INSTR(SUBSTR(s.actor, 4), ':') - 1))
-        ELSE LOWER(SUBSTR(s.actor, INSTR(s.actor, ':') + 1))
-      END
-      =
-      CASE WHEN t.agente LIKE 'IA:%'
-        THEN LOWER(SUBSTR(t.agente, 4, INSTR(SUBSTR(t.agente, 4), ':') - 1))
-        ELSE LOWER(SUBSTR(t.agente, INSTR(t.agente, ':') + 1))
-      END
-      OR
-      CASE WHEN s.autor LIKE 'IA:%'
-        THEN LOWER(SUBSTR(s.autor, 4, INSTR(SUBSTR(s.autor, 4), ':') - 1))
-        WHEN s.autor IS NOT NULL AND s.autor <> ''
-        THEN LOWER(s.autor)
-        ELSE '~~ninguno~~'
-      END
-      =
-      CASE WHEN t.agente LIKE 'IA:%'
-        THEN LOWER(SUBSTR(t.agente, 4, INSTR(SUBSTR(t.agente, 4), ':') - 1))
-        ELSE LOWER(SUBSTR(t.agente, INSTR(t.agente, ':') + 1))
-      END
-    )
 )
-BEGIN SELECT RAISE(ABORT, 'F1-R2: el examinado no puede reescribir su propio examen'); END;
+AND NOT EXISTS (
+  SELECT 1 FROM evento e
+  WHERE e.plan_id = OLD.plan_id
+    AND e.accion = 'cambio_requisito_aprobado'
+    AND (e.actor LIKE 'H:%' OR e.actor LIKE 'IA:00-lead:%')
+    AND (e.detalle LIKE '%' || OLD.ref || ' %'
+         OR e.detalle LIKE '%' || OLD.ref || ':%'
+         OR e.detalle LIKE '% ' || OLD.ref)
+)
+BEGIN SELECT RAISE(ABORT, 'F1-R2: modificacion de requisito con tarea abierta requiere cambio_requisito_aprobado de humano o lead'); END;
 """
 
 TRIGGER_R4 = """
 CREATE TRIGGER IF NOT EXISTS f1_r4_requisito_firmado
 BEFORE UPDATE OF ears, comprobacion ON requisito
 WHEN EXISTS (
-  SELECT 1 FROM tarea t
+  SELECT 1 FROM tarea t, evento e
   WHERE t.plan_id = OLD.plan_id AND t.req_ref = OLD.ref
-    AND t.progreso = 'hecha'
+    AND e.accion = 'firma_tarea' AND e.plan_id = OLD.plan_id
+    AND (e.detalle LIKE 'tarea ' || CAST(t.id AS TEXT) || ' %'
+         OR e.detalle LIKE 'tarea ' || CAST(t.id AS TEXT) || '(%'
+         OR e.detalle LIKE 'tarea ' || CAST(t.id AS TEXT) || ':%')
 )
 BEGIN SELECT RAISE(ABORT, 'F1-R4: requisito con tarea firmada esta congelado'); END;
+"""
+
+TRIGGER_R4B = """
+CREATE TRIGGER IF NOT EXISTS f1_r4b_requisito_no_borrar
+BEFORE DELETE ON requisito
+WHEN EXISTS (
+  SELECT 1 FROM tarea WHERE plan_id = OLD.plan_id AND req_ref = OLD.ref
+)
+BEGIN SELECT RAISE(ABORT, 'F1-R4b: requisito con tareas no se puede borrar'); END;
 """
 
 TRIGGER_R6 = """
@@ -120,42 +110,78 @@ CREATE TRIGGER IF NOT EXISTS f1_r6_sin_entrega_no_veredicto
 BEFORE INSERT ON evento
 WHEN NEW.accion = 'verificado'
   AND NEW.plan_id IS NOT NULL
+  AND NEW.detalle LIKE 'tarea %'
   AND NOT EXISTS (
     SELECT 1 FROM evento e2
     WHERE e2.accion = 'tarea_entregada'
       AND e2.plan_id = NEW.plan_id
-      AND EXISTS (
-        SELECT 1 FROM sesion_actual sa
-        WHERE sa.tarea_id IS NOT NULL
-          AND (e2.detalle LIKE 'tarea ' || CAST(sa.tarea_id AS TEXT) || ' %'
-               OR e2.detalle LIKE 'tarea ' || CAST(sa.tarea_id AS TEXT) || ':%')
+      AND (
+        e2.detalle LIKE 'tarea '
+          || SUBSTR(NEW.detalle, 7,
+               MIN(INSTR(SUBSTR(NEW.detalle, 7) || ' ', ' '),
+                   INSTR(SUBSTR(NEW.detalle, 7) || ':', ':')) - 1)
+          || ' %'
+        OR
+        e2.detalle LIKE 'tarea '
+          || SUBSTR(NEW.detalle, 7,
+               MIN(INSTR(SUBSTR(NEW.detalle, 7) || ' ', ' '),
+                   INSTR(SUBSTR(NEW.detalle, 7) || ':', ':')) - 1)
+          || ':%'
       )
   )
 BEGIN SELECT RAISE(ABORT, 'F1-R6: sin tarea_entregada no se admite verificado'); END;
 """
 
+TRIGGER_R6B = """
+CREATE TRIGGER IF NOT EXISTS f1_r6b_verificado_tarea_valida
+BEFORE INSERT ON evento
+WHEN NEW.accion = 'verificado'
+  AND (
+    NEW.plan_id IS NULL
+    OR NEW.detalle IS NULL
+    OR NEW.detalle NOT LIKE 'tarea %'
+    OR NOT EXISTS (
+      SELECT 1 FROM tarea t
+      WHERE t.plan_id = NEW.plan_id
+        AND CAST(t.id AS TEXT) = SUBSTR(NEW.detalle, 7,
+          MIN(INSTR(SUBSTR(NEW.detalle, 7) || ' ', ' '),
+              INSTR(SUBSTR(NEW.detalle, 7) || ':', ':')) - 1)
+    )
+  )
+BEGIN SELECT RAISE(ABORT, 'F1-R6: verificado requiere plan_id, detalle con tarea N y tarea existente en el plan'); END;
+"""
+
+TRIGGER_R8U = """
+CREATE TRIGGER IF NOT EXISTS f1_r8_evidencia_inmutable_u
+BEFORE UPDATE ON evidencia
+BEGIN SELECT RAISE(ABORT, 'F1-R8: evidencia es de solo insercion'); END;
+"""
+
+TRIGGER_R8D = """
+CREATE TRIGGER IF NOT EXISTS f1_r8_evidencia_inmutable_d
+BEFORE DELETE ON evidencia
+BEGIN SELECT RAISE(ABORT, 'F1-R8: evidencia es de solo insercion'); END;
+"""
+
 ALL_TRIGGERS = {
     "f1_r2_examinado_no_reescribe": TRIGGER_R2,
     "f1_r4_requisito_firmado": TRIGGER_R4,
+    "f1_r4b_requisito_no_borrar": TRIGGER_R4B,
     "f1_r6_sin_entrega_no_veredicto": TRIGGER_R6,
+    "f1_r6b_verificado_tarea_valida": TRIGGER_R6B,
+    "f1_r8_evidencia_inmutable_u": TRIGGER_R8U,
+    "f1_r8_evidencia_inmutable_d": TRIGGER_R8D,
 }
 
 
-def crear_sesion_actual(conn: sqlite3.Connection) -> None:
-    conn.executescript(SESION_ACTUAL_DDL)
-
-
-def set_sesion(conn: sqlite3.Connection, actor: str = "", autor: str = "", tarea_id: int | None = None) -> None:
-    conn.execute("DELETE FROM sesion_actual")
-    conn.execute("INSERT INTO sesion_actual (actor, autor, tarea_id) VALUES (?,?,?)",
-                 (actor, autor, tarea_id))
-
-
 def instalar_triggers(conn: sqlite3.Connection) -> list[str]:
-    crear_sesion_actual(conn)
     instalados = []
     existentes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'").fetchall()}
+    tablas = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     for nombre, sql in ALL_TRIGGERS.items():
+        if "evidencia" in nombre and "evidencia" not in tablas:
+            instalados.append(f"{nombre} (tabla evidencia no existe, omitido)")
+            continue
         if nombre in existentes:
             instalados.append(f"{nombre} (ya existe)")
         else:
@@ -418,9 +444,24 @@ def verificar_r7(conn: sqlite3.Connection) -> list[str]:
     return violaciones
 
 
+def verificar_r8(conn: sqlite3.Connection) -> list[str]:
+    """Evidencia append-only: triggers instalados."""
+    tablas = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "evidencia" not in tablas:
+        return ["R8: tabla evidencia no existe en este esquema"]
+    triggers = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'").fetchall()}
+    violaciones = []
+    if "f1_r8_evidencia_inmutable_u" not in triggers:
+        violaciones.append("R8: trigger f1_r8_evidencia_inmutable_u no instalado")
+    if "f1_r8_evidencia_inmutable_d" not in triggers:
+        violaciones.append("R8: trigger f1_r8_evidencia_inmutable_d no instalado")
+    return violaciones
+
+
 VERIFICADORES = {
     "r1": verificar_r1, "r2": verificar_r2, "r3": verificar_r3,
     "r4": verificar_r4, "r5": verificar_r5, "r6": verificar_r6, "r7": verificar_r7,
+    "r8": verificar_r8,
 }
 
 
@@ -456,7 +497,6 @@ def plan_de_ataque(conn: sqlite3.Connection, tag: str) -> str:
 
 
 def atacar_r2(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
-    crear_sesion_actual(conn)
     conn.executescript(TRIGGER_R2)
     resultados = []
 
@@ -466,33 +506,40 @@ def atacar_r2(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
     conn.execute("INSERT OR IGNORE INTO tarea (plan_id, req_ref, titulo, progreso, agente) VALUES (?,?,?,?,?)",
                  (plan, "R1", "test", "trabajando", "IA:02-backend-api:claude-sonnet-5"))
 
-    set_sesion(conn, actor="IA:05-arquitecto-sypnose:claude-opus-4-6", autor="05-arquitecto-sypnose")
+    conn.execute("INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+                 (ahora(), "H:carlos", "cambio_requisito_aprobado", plan, "R1 autorizado"))
     try:
         conn.execute("UPDATE requisito SET comprobacion='pytest -q' WHERE plan_id=? AND ref='R1'", (plan,))
-        resultados.append(("R2+ arquitecto (05) modifica req de agente 02 -> pasa", True))
+        resultados.append(("R2+ con cambio_requisito_aprobado de H:carlos -> pasa", True))
     except sqlite3.IntegrityError:
-        resultados.append(("R2+ arquitecto (05) modifica req de agente 02 -> pasa", False))
+        resultados.append(("R2+ con cambio_requisito_aprobado de H:carlos -> pasa", False))
 
-    conn.execute("UPDATE requisito SET comprobacion='echo test' WHERE plan_id=? AND ref='R1'", (plan,))
-    set_sesion(conn, actor="IA:02-backend-api:claude-sonnet-5", autor="02-backend-api")
-    try:
-        conn.execute("UPDATE requisito SET comprobacion='pytest -v' WHERE plan_id=? AND ref='R1'", (plan,))
-        resultados.append(("R2- ejecutor (02) modifica su propio req -> ABORT", False))
-    except sqlite3.IntegrityError as e:
-        resultados.append(("R2- ejecutor (02) modifica su propio req -> ABORT", "F1-R2" in str(e)))
+    plan2 = plan_de_ataque(conn, "R2b")
+    conn.execute("INSERT OR IGNORE INTO requisito (plan_id, ref, ears, comprobacion) VALUES (?,?,?,?)",
+                 (plan2, "R1", "test ears", "echo test"))
+    conn.execute("INSERT OR IGNORE INTO tarea (plan_id, req_ref, titulo, progreso, agente) VALUES (?,?,?,?,?)",
+                 (plan2, "R1", "test", "trabajando", "IA:02-backend-api:claude-sonnet-5"))
 
-    set_sesion(conn, actor="IA:05-arquitecto-sypnose:claude-opus-4-6", autor="02-backend-api")
     try:
-        conn.execute("UPDATE requisito SET comprobacion='pytest -v' WHERE plan_id=? AND ref='R1'", (plan,))
-        resultados.append(("R2- autor interpuesto (autor=02) modifica req de 02 -> ABORT", False))
+        conn.execute("UPDATE requisito SET comprobacion='pytest -v' WHERE plan_id=? AND ref='R1'", (plan2,))
+        resultados.append(("R2- sin cambio_requisito_aprobado -> ABORT", False))
     except sqlite3.IntegrityError as e:
-        resultados.append(("R2- autor interpuesto (autor=02) modifica req de 02 -> ABORT", "F1-R2" in str(e)))
+        resultados.append(("R2- sin cambio_requisito_aprobado -> ABORT", "F1-R2" in str(e)))
+
+    conn.execute("INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+                 (ahora(), "IA:02-backend-api:claude-sonnet-5", "cambio_requisito_aprobado", plan2, "R1 autorizado"))
+    try:
+        conn.execute("UPDATE requisito SET comprobacion='pytest -vv' WHERE plan_id=? AND ref='R1'", (plan2,))
+        resultados.append(("R2- cambio_requisito_aprobado de IA no-lead -> ABORT", False))
+    except sqlite3.IntegrityError as e:
+        resultados.append(("R2- cambio_requisito_aprobado de IA no-lead -> ABORT", "F1-R2" in str(e)))
 
     return resultados
 
 
 def atacar_r4(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
     conn.executescript(TRIGGER_R4)
+    conn.executescript(TRIGGER_R4B)
     resultados = []
 
     plan = plan_de_ataque(conn, "R4")
@@ -500,30 +547,43 @@ def atacar_r4(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
                  (plan, "R1", "test ears", "echo test"))
     conn.execute("INSERT OR IGNORE INTO tarea (plan_id, req_ref, titulo, progreso, agente) VALUES (?,?,?,?,?)",
                  (plan, "R1", "test sin firma", "trabajando", "IA:02-backend-api:claude-sonnet-5"))
+    tid = conn.execute("SELECT id FROM tarea WHERE plan_id=? AND req_ref='R1'", (plan,)).fetchone()[0]
 
-    set_sesion(conn, actor="IA:05-arquitecto-sypnose:claude-opus-4-6")
+    conn.execute("INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+                 (ahora(), "H:carlos", "cambio_requisito_aprobado", plan, "R1 autorizado"))
+
     try:
         conn.execute("UPDATE requisito SET comprobacion='pytest -q' WHERE plan_id=? AND ref='R1'", (plan,))
-        resultados.append(("R4+ modificar req sin tarea firmada -> pasa", True))
+        resultados.append(("R4+ modificar req sin evento firma_tarea -> pasa", True))
     except sqlite3.IntegrityError:
-        resultados.append(("R4+ modificar req sin tarea firmada -> pasa", False))
+        resultados.append(("R4+ modificar req sin evento firma_tarea -> pasa", False))
 
-    conn.execute("UPDATE requisito SET comprobacion='echo test' WHERE plan_id=? AND ref='R1'", (plan,))
-    tid = conn.execute("SELECT id FROM tarea WHERE plan_id=? AND req_ref='R1'", (plan,)).fetchone()[0]
-    conn.execute("UPDATE tarea SET progreso='espera_firma', verificada_por='IA:07-verificador:claude-opus-5' WHERE id=?", (tid,))
-    conn.execute("UPDATE tarea SET progreso='hecha' WHERE id=?", (tid,))
+    conn.execute("INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+                 (ahora(), "H:carlos", "firma_tarea", plan, f"tarea {tid} (R1)"))
 
     try:
         conn.execute("UPDATE requisito SET comprobacion='pytest -v' WHERE plan_id=? AND ref='R1'", (plan,))
-        resultados.append(("R4- modificar req con tarea hecha -> ABORT", False))
+        resultados.append(("R4- modificar req con firma_tarea -> ABORT", False))
     except sqlite3.IntegrityError as e:
-        resultados.append(("R4- modificar req con tarea hecha -> ABORT", "F1-R4" in str(e)))
+        resultados.append(("R4- modificar req con firma_tarea -> ABORT", "F1-R4" in str(e)))
+
+    conn.execute("UPDATE tarea SET progreso='trabajando' WHERE id=?", (tid,))
+    try:
+        conn.execute("UPDATE requisito SET comprobacion='pytest -vv' WHERE plan_id=? AND ref='R1'", (plan,))
+        resultados.append(("R4- evasion: bajar progreso tras firma -> ABORT", False))
+    except sqlite3.IntegrityError as e:
+        resultados.append(("R4- evasion: bajar progreso tras firma -> ABORT", "F1-R4" in str(e)))
+
+    try:
+        conn.execute("DELETE FROM requisito WHERE plan_id=? AND ref='R1'", (plan,))
+        resultados.append(("R4b- borrar requisito con tareas -> ABORT", False))
+    except sqlite3.IntegrityError as e:
+        resultados.append(("R4b- borrar requisito con tareas -> ABORT", "F1-R4b" in str(e)))
 
     return resultados
 
 
 def atacar_r5(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
-    crear_sesion_actual(conn)
     resultados = []
 
     plan = plan_de_ataque(conn, "R5")
@@ -539,7 +599,10 @@ def atacar_r5(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
     conn.execute("INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
                  ("2026-09-15T10:31:00.000Z", "IA:02-backend-api:claude-sonnet-5", "tarea_entregada", plan,
                   f"tarea {tid} R1: pytest -q -> 15 passed"))
-    resultados.append(("R5+ entrega 31 min despues de ablanda=si -> pasa", True))
+
+    vs1 = verificar_r5(conn)
+    hay_plan_31m = any(plan in v for v in vs1)
+    resultados.append(("R5+ entrega 31 min despues de ablanda=si -> pasa", not hay_plan_31m))
 
     conn.execute("INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
                  ("2026-09-15T11:00:00.000Z", ACTOR, "requisito_corregido", plan,
@@ -548,9 +611,11 @@ def atacar_r5(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
                  ("2026-09-15T11:00:12.000Z", "IA:02-backend-api:claude-sonnet-5", "tarea_entregada", plan,
                   f"tarea {tid} R1: pytest -v -> 15 passed"))
 
-    vs = verificar_r5(conn)
-    hay_12s = any("12s" in v and plan in v for v in vs)
+    vs2 = verificar_r5(conn)
+    hay_12s = any("12s" in v and plan in v for v in vs2)
     resultados.append(("R5- entrega 12s despues de ablanda=si -> violacion", hay_12s))
+
+    count_antes = len([v for v in vs2 if plan in v])
 
     conn.execute("INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
                  ("2026-09-15T12:00:00.000Z", ACTOR, "requisito_corregido", plan,
@@ -559,16 +624,16 @@ def atacar_r5(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
                  ("2026-09-15T12:00:05.000Z", "IA:02-backend-api:claude-sonnet-5", "tarea_entregada", plan,
                   f"tarea {tid} R1: pytest -vv -> 15 passed"))
 
-    vs2 = verificar_r5(conn)
-    hay_5s_neutro = any("5s" in v and "12:00:05" in v for v in vs2)
-    resultados.append(("R5+ entrega 5s despues de ablanda=neutro -> exento", not hay_5s_neutro))
+    vs3 = verificar_r5(conn)
+    count_despues = len([v for v in vs3 if plan in v])
+    resultados.append(("R5+ entrega 5s despues de ablanda=neutro -> exento", count_despues == count_antes))
 
     return resultados
 
 
 def atacar_r6(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
-    crear_sesion_actual(conn)
     conn.executescript(TRIGGER_R6)
+    conn.executescript(TRIGGER_R6B)
     resultados = []
 
     plan = plan_de_ataque(conn, "R6")
@@ -578,7 +643,6 @@ def atacar_r6(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
                  (plan, "R1", "test sin entrega", "trabajando", "IA:02-backend-api:claude-sonnet-5"))
     tid = conn.execute("SELECT id FROM tarea WHERE plan_id=? AND req_ref='R1'", (plan,)).fetchone()[0]
 
-    set_sesion(conn, tarea_id=tid)
     try:
         conn.execute("INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
                      (ahora(), "IA:07-verificador:claude-opus-5", "verificado", plan,
@@ -591,7 +655,6 @@ def atacar_r6(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
                  (ahora(), "IA:02-backend-api:claude-sonnet-5", "tarea_entregada", plan,
                   f"tarea {tid} R1: echo test -> ok"))
 
-    set_sesion(conn, tarea_id=tid)
     try:
         conn.execute("INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
                      (ahora(), "IA:07-verificador:claude-opus-5", "verificado", plan,
@@ -599,6 +662,22 @@ def atacar_r6(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
         resultados.append(("R6+ verificado con tarea_entregada previa -> pasa", True))
     except sqlite3.IntegrityError:
         resultados.append(("R6+ verificado con tarea_entregada previa -> pasa", False))
+
+    try:
+        conn.execute("INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+                     (ahora(), "IA:07-verificador:claude-opus-5", "verificado", plan,
+                      "tarea 999999 R1: CUMPLE"))
+        resultados.append(("R6b- verificado con tarea inexistente -> ABORT", False))
+    except sqlite3.IntegrityError as e:
+        resultados.append(("R6b- verificado con tarea inexistente -> ABORT", "F1-R6" in str(e)))
+
+    try:
+        conn.execute("INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+                     (ahora(), "IA:07-verificador:claude-opus-5", "verificado", None,
+                      f"tarea {tid} R1: CUMPLE"))
+        resultados.append(("R6b- verificado con plan_id NULL -> ABORT", False))
+    except sqlite3.IntegrityError as e:
+        resultados.append(("R6b- verificado con plan_id NULL -> ABORT", "F1-R6" in str(e)))
 
     return resultados
 
@@ -625,17 +704,69 @@ def atacar_r3(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
 
 def atacar_r7(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
     resultados = []
-    vs = verificar_r7(conn)
-    tiene_delegado = len(vs) > 0
-    resultados.append(("R7- --delegado existe en cargar_requisito.py", tiene_delegado))
-    resultados.append(("R7+ compuerta_f1.py no contiene --delegado",
-                        not any("compuerta_f1" in v for v in vs)))
+
+    tmp_dir = PLANTILLA / "__r7_test__"
+    tmp_dir.mkdir(exist_ok=True)
+
+    tmp_dirty = tmp_dir / "test_delegado.py"
+    tmp_dirty.write_text("parser.add_argument('--delegado')\n", encoding="utf-8")
+    try:
+        vs_neg = verificar_r7(conn)
+        tiene_test = any("__r7_test__" in v and "test_delegado" in v for v in vs_neg)
+        resultados.append(("R7- fichero con --delegado inyectado -> detectado", tiene_test))
+    finally:
+        tmp_dirty.unlink(missing_ok=True)
+
+    tmp_clean = tmp_dir / "test_limpio.py"
+    tmp_clean.write_text("parser.add_argument('--verbose')\n", encoding="utf-8")
+    try:
+        vs_pos = verificar_r7(conn)
+        tiene_clean = any("test_limpio" in v for v in vs_pos)
+        resultados.append(("R7+ fichero sin --delegado -> no detectado", not tiene_clean))
+    finally:
+        tmp_clean.unlink(missing_ok=True)
+        try:
+            tmp_dir.rmdir()
+        except OSError:
+            pass
+
+    return resultados
+
+
+def atacar_r8(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
+    tablas = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "evidencia" not in tablas:
+        return [("R8 tabla evidencia no existe, omitido", True)]
+
+    conn.executescript(TRIGGER_R8U)
+    conn.executescript(TRIGGER_R8D)
+    resultados = []
+
+    plan = plan_de_ataque(conn, "R8")
+    conn.execute(
+        "INSERT OR IGNORE INTO evidencia (plan_id, fuente, dice) VALUES (?,?,?)",
+        (plan, "test-r8-fuente", "test-r8-dice"))
+    resultados.append(("R8+ INSERT en evidencia -> pasa", True))
+
+    try:
+        conn.execute("UPDATE evidencia SET dice='modified' WHERE plan_id=? AND fuente='test-r8-fuente'", (plan,))
+        resultados.append(("R8- UPDATE en evidencia -> ABORT", False))
+    except sqlite3.IntegrityError as e:
+        resultados.append(("R8- UPDATE en evidencia -> ABORT", "F1-R8" in str(e)))
+
+    try:
+        conn.execute("DELETE FROM evidencia WHERE plan_id=? AND fuente='test-r8-fuente'", (plan,))
+        resultados.append(("R8- DELETE en evidencia -> ABORT", False))
+    except sqlite3.IntegrityError as e:
+        resultados.append(("R8- DELETE en evidencia -> ABORT", "F1-R8" in str(e)))
+
     return resultados
 
 
 ATACANTES = {
     "r1": atacar_r1, "r2": atacar_r2, "r3": atacar_r3,
     "r4": atacar_r4, "r5": atacar_r5, "r6": atacar_r6, "r7": atacar_r7,
+    "r8": atacar_r8,
 }
 
 
@@ -681,7 +812,8 @@ def cmd_atacar(db_path: Path, rail: str) -> int:
 
 
 def cmd_aplicar(db_path: Path) -> int:
-    bk = db_path.with_suffix(".db.backup-pre-f1")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    bk = db_path.parent / f"{db_path.stem}.backup-pre-f1-{ts}.db"
     conn_src = sqlite3.connect(str(db_path))
     conn_bk = sqlite3.connect(str(bk))
     conn_src.backup(conn_bk)
@@ -714,8 +846,8 @@ def cmd_aplicar(db_path: Path) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="PLAN-CS-F1: railes deterministas de integridad de requisitos")
     ap.add_argument("--db", required=True, help="ruta a la copia del registro (sqlite3 .backup)")
-    ap.add_argument("--verificar", nargs="?", const="todos", help="r1..r7 o 'todos'")
-    ap.add_argument("--atacar", nargs="?", const="todos", help="r1..r7 o 'todos'")
+    ap.add_argument("--verificar", nargs="?", const="todos", help="r1..r8 o 'todos'")
+    ap.add_argument("--atacar", nargs="?", const="todos", help="r1..r8 o 'todos'")
     ap.add_argument("--aplicar", action="store_true", help="backup + instalar triggers")
     args = ap.parse_args()
 
