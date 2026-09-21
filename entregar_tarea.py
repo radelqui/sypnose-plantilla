@@ -1,10 +1,12 @@
-"""Entrega una tarea sin caparazón (pendiente/trabajando → espera_firma).
+"""Entrega una tarea sin caparazon (pendiente/trabajando -> espera_firma).
 
-Registra evento tarea_entregada con la salida de la comprobación,
-pone verificada_por (D7 exige ≠ agente) y progreso=espera_firma.
+Registra evento tarea_entregada con la salida de la comprobacion y
+progreso=espera_firma. NO escribe verificada_por: D7 exige que ese campo
+quede vacio hasta el veredicto real de 07 (informe viabilidad JEV, seccion
+2.2; correccion F0.1 PLAN-CS-F0).
 
     python3 entregar_tarea.py --db ~/sypnose-f1/registry.db \
-        --tarea 17 --verificador IA:07-verificador:claude-opus-4-6 \
+        --tarea 17 \
         --salida "plantilla: 97 commits, 4 chats distintos\\nCUMPLE"
 """
 from __future__ import annotations
@@ -19,7 +21,6 @@ from barrera import (
     backup_registro,
     verificar_canonicos_registrados,
     verificar_d7_entrega,
-    verificar_d7_verificador,
     verificar_repo_limpio,
 )
 
@@ -31,11 +32,10 @@ def ahora() -> str:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Entrega tarea sin caparazón")
+    ap = argparse.ArgumentParser(description="Entrega tarea sin caparazon")
     ap.add_argument("--db", required=True)
     ap.add_argument("--tarea", type=int, required=True)
-    ap.add_argument("--verificador", required=True, help="actor verificada_por (D7: ≠ agente)")
-    ap.add_argument("--salida", required=True, help="salida real de la comprobación")
+    ap.add_argument("--salida", required=True, help="salida real de la comprobacion")
     ap.add_argument("--agente-real", help="corregir agente si difiere del asignado en el molde")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -63,11 +63,8 @@ def main() -> None:
         sys.exit(f"[FALLO] tarea {tid} progreso={progreso}, esperado pendiente/trabajando")
 
     agente_final = args.agente_real if args.agente_real else agente
-    if agente_final == args.verificador:
-        sys.exit(f"[FALLO] D7: verificador ({args.verificador}) == agente ({agente_final})")
 
     verificar_d7_entrega(conn, tid, ACTOR)
-    verificar_d7_verificador(conn, args.verificador)
 
     if args.agente_real:
         ag = conn.execute("SELECT id FROM actor WHERE id=?", (args.agente_real,)).fetchone()
@@ -76,7 +73,7 @@ def main() -> None:
 
     print(f"[entregar] tarea {tid} ({ref}: {titulo})")
     print(f"[agente] {agente_final}{' (corregido de ' + agente + ')' if args.agente_real else ''}")
-    print(f"[verificador] {args.verificador}")
+    print(f"[verificada_por] se deja vacio hasta veredicto real de 07 (D7/F0.1)")
     print(f"[salida] {args.salida[:200]}")
 
     if args.dry_run:
@@ -94,8 +91,8 @@ def main() -> None:
             conn.execute("UPDATE tarea SET agente=? WHERE id=?", (args.agente_real, tid))
 
         conn.execute(
-            "UPDATE tarea SET progreso='espera_firma', verificada_por=? WHERE id=?",
-            (args.verificador, tid),
+            "UPDATE tarea SET progreso='espera_firma' WHERE id=?",
+            (tid,),
         )
         conn.execute(
             "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
@@ -109,7 +106,7 @@ def main() -> None:
     finally:
         conn.close()
 
-    print(f"[OK] tarea {tid} → espera_firma (verificador: {args.verificador})")
+    print(f"[OK] tarea {tid} -> espera_firma (verificada_por queda vacio)")
 
 
 if __name__ == "__main__":
