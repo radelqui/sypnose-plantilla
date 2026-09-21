@@ -303,3 +303,93 @@ def registrar_evento(
         vals,
     )
     return cur.lastrowid
+
+
+_RE_BACKUP_DATE = re.compile(r"(\d{8})-(\d{4,6})")
+_PROTEGIDOS = ("pre-compuerta", "pre-retro")
+
+
+def rotar_backups(db_path: Path, dry_run: bool = True) -> dict:
+    """Rotate backup files: keep first of each day + last 20 + protected.
+
+    Default is --dry-run (report only). Pass dry_run=False to delete.
+    Protected: filenames containing 'pre-compuerta' or 'pre-retro'.
+
+        python3 barrera.py rotar --db ~/sypnose-f1/registry.db [--ejecutar]
+    """
+    backup_dir = db_path.parent
+    backups = sorted(backup_dir.glob("registry-backup-*.db"))
+    if not backups:
+        print("[rotar] no hay backups")
+        return {"kept": 0, "deleted": 0, "freed_mb": 0}
+
+    protected = set()
+    for b in backups:
+        if any(p in b.name for p in _PROTEGIDOS):
+            protected.add(b)
+
+    last_20 = set(backups[-20:])
+
+    by_day: dict[str, list[Path]] = {}
+    for b in backups:
+        m = _RE_BACKUP_DATE.search(b.name)
+        if m:
+            day = m.group(1)
+            by_day.setdefault(day, []).append(b)
+        else:
+            protected.add(b)
+
+    first_of_day = set()
+    for day, files in by_day.items():
+        first_of_day.add(files[0])
+
+    keep = protected | last_20 | first_of_day
+    to_delete = [b for b in backups if b not in keep]
+
+    total_bytes = sum(b.stat().st_size for b in backups)
+    delete_bytes = sum(b.stat().st_size for b in to_delete)
+    keep_bytes = total_bytes - delete_bytes
+
+    print(f"[rotar] {len(backups)} backups, {total_bytes / 1e9:.1f} GB total")
+    print(f"  protegidos: {len(protected)}")
+    print(f"  ultimos 20: {len(last_20)}")
+    print(f"  primero de cada dia: {len(first_of_day)} ({len(by_day)} dias)")
+    print(f"  a conservar: {len(keep)} ({keep_bytes / 1e9:.1f} GB)")
+    print(f"  a eliminar: {len(to_delete)} ({delete_bytes / 1e9:.1f} GB)")
+
+    if dry_run:
+        print("\n  --dry-run (default): no se borra nada")
+        if to_delete:
+            print("  primeros 10 que se borrarian:")
+            for b in to_delete[:10]:
+                print(f"    {b.name} ({b.stat().st_size / 1e6:.0f} MB)")
+    else:
+        for b in to_delete:
+            b.unlink()
+        print(f"\n  [OK] {len(to_delete)} backups eliminados, {delete_bytes / 1e6:.0f} MB liberados")
+
+    return {
+        "kept": len(keep),
+        "deleted": len(to_delete) if not dry_run else 0,
+        "freed_mb": int(delete_bytes / 1e6) if not dry_run else 0,
+        "would_free_mb": int(delete_bytes / 1e6),
+    }
+
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description="barrera.py — utilidades de integridad")
+    sub = ap.add_subparsers(dest="cmd")
+    rot = sub.add_parser("rotar", help="rotar backups (--dry-run por defecto)")
+    rot.add_argument("--db", required=True, help="ruta a registry.db")
+    rot.add_argument("--ejecutar", action="store_true",
+                     help="borrar de verdad (sin esto solo reporta)")
+    args = ap.parse_args()
+    if args.cmd == "rotar":
+        db_path = Path(args.db).expanduser().resolve()
+        if not db_path.exists():
+            sys.exit(f"[FALLO] {db_path} no existe")
+        rotar_backups(db_path, dry_run=not args.ejecutar)
+    else:
+        ap.print_help()
+
