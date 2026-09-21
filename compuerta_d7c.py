@@ -1,4 +1,4 @@
-"""Fase D7c v4: INSERT gemelos + firmar exige verificado + limpieza + --aplicar.
+"""Fase D7c v5: INSERT gemelos + firmar + limpieza + --aplicar + compat F1.
 
 Arreglos del veredicto 71 NO CUMPLE:
   (1) Trigger INSERT D7b auto-verificacion (mismo rol 07 no se auto-verifica)
@@ -6,6 +6,8 @@ Arreglos del veredicto 71 NO CUMPLE:
   (3) LIKE anclado: 'tarea N %' en ambas queries (evita tarea 7 vs 71)
   (4) ORDER BY+LIMIT correcto tras anclar LIKE + plan_id
   (5) --aplicar: DDL + limpieza sobre el vivo con backup .backup
+  (6) Compat F1: IntegrityError de triggers F1 en fixtures negativos = [BLOQUEADO OK]
+  (7) LIKE acepta 'tarea N %' y 'tarea N:%'; veredicto por prefijo
 
     python3 compuerta_d7c.py --db ~/sypnose-f1/registry.db
     python3 compuerta_d7c.py --db ~/sypnose-f1/registry.db --aplicar
@@ -102,16 +104,18 @@ def verificar_evento_verificado(conn, tarea_id):
 
     entrega = conn.execute(
         "SELECT id, cuando FROM evento WHERE accion='tarea_entregada' "
-        "AND plan_id=? AND detalle LIKE ? ORDER BY id DESC LIMIT 1",
-        (plan_id, f"tarea {tarea_id} %"),
+        "AND plan_id=? AND (detalle LIKE ? OR detalle LIKE ?) "
+        "ORDER BY id DESC LIMIT 1",
+        (plan_id, f"tarea {tarea_id} %", f"tarea {tarea_id}:%"),
     ).fetchone()
     if not entrega:
         return False, f"no hay evento tarea_entregada para tarea {tarea_id} en {plan_id}"
 
     verificado = conn.execute(
         "SELECT id, actor, cuando, detalle FROM evento WHERE accion='verificado' "
-        "AND plan_id=? AND detalle LIKE ? AND cuando > ? ORDER BY id DESC LIMIT 1",
-        (plan_id, f"tarea {tarea_id} %", entrega[1]),
+        "AND plan_id=? AND (detalle LIKE ? OR detalle LIKE ?) "
+        "AND cuando > ? ORDER BY id DESC LIMIT 1",
+        (plan_id, f"tarea {tarea_id} %", f"tarea {tarea_id}:%", entrega[1]),
     ).fetchone()
     if not verificado:
         return False, (
@@ -119,10 +123,12 @@ def verificar_evento_verificado(conn, tarea_id):
             f"para tarea {tarea_id} en {plan_id}"
         )
     detalle_v = verificado[3] if len(verificado) > 3 else ""
-    if detalle_v and ": NO CUMPLE" in detalle_v:
-        return False, (
-            f"veredicto NO CUMPLE para tarea {tarea_id} (evento {verificado[0]})"
-        )
+    if detalle_v:
+        _partes = detalle_v.rsplit(": ", 1)
+        if len(_partes) == 2 and _partes[1].startswith("NO CUMPLE"):
+            return False, (
+                f"veredicto NO CUMPLE para tarea {tarea_id} (evento {verificado[0]})"
+            )
     if verificado[1] != vp:
         return False, (
             f"verificada_por={vp} pero evento verificado {verificado[0]} "
@@ -175,7 +181,7 @@ def aplicar_ddl(conn):
 
 def main():
     global ok, fail
-    ap = argparse.ArgumentParser(description="D7c v4: INSERT gemelos + firmar + limpieza + aplicar")
+    ap = argparse.ArgumentParser(description="D7c v5: INSERT gemelos + firmar + limpieza + F1 compat")
     ap.add_argument("--db", required=True, help="ruta a registry.db")
     ap.add_argument("--aplicar", action="store_true",
                     help="aplicar DDL + limpieza al vivo (hace backup primero)")
@@ -363,18 +369,28 @@ def main():
         (ts_ent1, "IA:03-datos-rag:claude-opus-5", "tarea_entregada",
          "PLAN-TEST-CROSS", f"tarea {tid_cross} R1: entrega"),
     )
-    conn.execute(
-        "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
-        (ts_ver1, "IA:07-verificador:claude-opus-5", "verificado",
-         "PLAN-WRONG", f"tarea {tid_cross} R1: CUMPLE en otro plan"),
-    )
+    f1_blocked = False
+    try:
+        conn.execute(
+            "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+            (ts_ver1, "IA:07-verificador:claude-opus-5", "verificado",
+             "PLAN-WRONG", f"tarea {tid_cross} R1: CUMPLE en otro plan"),
+        )
+    except sqlite3.IntegrityError as e:
+        if "F1" in str(e):
+            f1_blocked = True
+            test("bug2: F1 bloquea verificado cross-plan antes que D7c", True,
+                 f"[BLOQUEADO OK] {e}")
+        else:
+            raise
 
-    ok_cross, mot_cross = verificar_evento_verificado(conn, tid_cross)
-    test(
-        "bug2: verificado en PLAN-WRONG no cuenta para PLAN-TEST-CROSS",
-        not ok_cross,
-        mot_cross,
-    )
+    if not f1_blocked:
+        ok_cross, mot_cross = verificar_evento_verificado(conn, tid_cross)
+        test(
+            "bug2: verificado en PLAN-WRONG no cuenta para PLAN-TEST-CROSS",
+            not ok_cross,
+            mot_cross,
+        )
 
     conn.execute("DELETE FROM tarea WHERE titulo IN ('tarea 7 test','tarea 71 test','cross-plan test')")
 
