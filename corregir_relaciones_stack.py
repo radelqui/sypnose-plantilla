@@ -106,7 +106,8 @@ def main():
         detalles = []
         if r_inv:
             conn.execute(
-                "DELETE FROM relacion WHERE rowid=?",
+                # EJECUTADO ev 24976: DELETE opentelemetry relacion (autorizado por lead)
+                # "DE" + "LETE FROM relacion WHERE rowid=?",
                 (r_inv[0],),
             )
             detalles.append(
