@@ -6,8 +6,13 @@ hace backup_registro() ANTES de escribir, y registra evento con VIEJO/NUEVO/sha/
 Idempotente: si EARS y comprobación ya coinciden, 0 cambios.
 Si el requisito cambia y hay tareas en espera_firma o hecha, aborta (requiere decisión humana).
 
-F0.3: valida comprobacion (rechaza prosa, 'true', pytest sin --cov-fail-under).
-       --auditar-deuda: listar requisitos heredados no conformes sin reescribirlos.
+F0.3 v2: validacion robusta de comprobacion con shlex.
+  - Prohibidos fuera de comillas: # ; && || \\n > < -> == ()
+  - Primer token: ejecutable conocido o ruta (nunca prosa).
+  - Comandos triviales rechazados: echo, true, test, :, bash/sh -c trivial.
+  - pytest: --cov-fail-under como argumento real con valor >= 85; -k y :: prohibidos.
+  - --sin-exigir-cobertura: solo lineas_de_proceso de oferta.yaml, con --motivo.
+  - --auditar-deuda: listar requisitos heredados no conformes sin reescribirlos.
 
     python3 cargar_requisito.py --db ~/sypnose-f1/registry.db T01 R1 specs/T01/spec.md
     python3 cargar_requisito.py --db ~/sypnose-f1/registry.db --auditar-deuda
@@ -16,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -37,10 +43,13 @@ OFERTA_YAML = PLANTILLA_DIR / "oferta.yaml"
 EJECUTABLES_CONOCIDOS = frozenset({
     "python3", "python", "pytest", "bash", "sh", "node", "npm", "npx",
     "make", "curl", "wget", "grep", "egrep", "fgrep", "sqlite3", "git",
-    "gh", "docker", "test", "diff", "sort", "wc", "awk", "sed", "find",
-    "cat", "echo", "cd", "ls", "head", "tail",
-    "SELECT", "EXPLAIN", "INSERT",
+    "gh", "docker", "diff", "sort", "wc", "awk", "sed", "find",
+    "cat", "head", "tail", "ls",
+    "SELECT", "EXPLAIN",
 })
+
+COMANDOS_TRIVIALES = frozenset({"echo", "true", "test", ":"})
+COV_UMBRAL_MINIMO = 85
 
 
 def ahora() -> str:
@@ -54,43 +63,156 @@ def cargar_yaml_mapas() -> tuple[dict, dict]:
     return plan_por_linea, roles_por_linea
 
 
+def _fuera_de_comillas(texto: str) -> str:
+    """Returns only the text outside of single/double quotes."""
+    out, q = [], None
+    for c in texto:
+        if q is None:
+            if c in ("'", '"'):
+                q = c
+            else:
+                out.append(c)
+        elif c == q:
+            q = None
+    return "".join(out)
+
+
+def _detectar_prohibido(comp: str) -> str | None:
+    """Detect prohibited shell metacharacters and prose indicators outside quotes."""
+    ext = _fuera_de_comillas(comp)
+    if "\n" in ext:
+        return "salto de linea (multi-comando)"
+    for pat, desc in [
+        ("#", "comentario (#)"),
+        ("&&", "encadenamiento (&&)"),
+        ("||", "supresion de error (||)"),
+        (";", "separador (;)"),
+    ]:
+        if pat in ext:
+            return desc
+    if "→" in ext:
+        return "prosa con flecha (→)"
+    if "->" in ext:
+        return "prosa con flecha (->)"
+    if "==" in ext:
+        return "prosa con comparacion (==)"
+    if ">" in ext:
+        return "redireccion (>)"
+    if "<" in ext:
+        return "redireccion (<)"
+    return None
+
+
+def _lineas_no_codigo() -> set[str]:
+    """Lines declared as process (not code) in oferta.yaml."""
+    datos = yaml.safe_load(OFERTA_YAML.read_text(encoding="utf-8"))
+    return set(datos.get("lineas_de_proceso", []))
+
+
 def validar_comprobacion(comp: str, exigir_cobertura: bool = True) -> tuple[bool, str]:
-    """Valida que la comprobacion sea un comando ejecutable.
-    Rechaza: vacia, literal 'true', prosa, pytest sin --cov-fail-under.
+    """Validates comp is a single executable command, not prose or bypass.
     Returns (ok, motivo).
     """
     comp = comp.strip()
     if not comp:
         return False, "comprobacion vacia"
-    if comp == "true":
-        return False, "literal 'true' no demuestra nada"
-    tokens = comp.split()
+    if comp.lower() in ("true", "false"):
+        return False, f"literal '{comp}' no demuestra nada"
+
+    prohibido = _detectar_prohibido(comp)
+    if prohibido:
+        return False, f"prohibido: {prohibido}"
+
+    try:
+        lex = shlex.shlex(comp, posix=True)
+        lex.whitespace_split = True
+        lex.commenters = ""
+        tokens = list(lex)
+    except ValueError as e:
+        return False, f"no parseable como comando: {e}"
+
+    if not tokens:
+        return False, "comprobacion vacia tras parseo"
+
     primer_token = tokens[0]
-    if "=" in primer_token and not primer_token.startswith("-"):
+    if "=" in primer_token and not primer_token.startswith("-") and not primer_token.startswith("$"):
         if len(tokens) > 1:
             primer_token = tokens[1]
-    pt = primer_token.strip('"\'')
+        else:
+            return False, "solo asignacion de variable, no hay comando"
+
+    pt_base = Path(primer_token).name if "/" in primer_token else primer_token
+
+    if pt_base in COMANDOS_TRIVIALES:
+        return False, f"comando trivial '{pt_base}' no demuestra conformidad"
+
+    if pt_base in ("bash", "sh"):
+        try:
+            idx_c = next(i for i, t in enumerate(tokens) if t == "-c")
+            if idx_c + 1 < len(tokens):
+                inner = tokens[idx_c + 1].strip()
+                inner_first = inner.split()[0] if inner.split() else inner
+                if inner_first in COMANDOS_TRIVIALES or inner in ("exit 0", "exit", "false"):
+                    return False, f"{pt_base} -c con comando trivial: '{inner}'"
+        except StopIteration:
+            pass
+
     es_ejecutable = (
-        pt in EJECUTABLES_CONOCIDOS
-        or "/" in pt
-        or "\\" in pt
-        or pt.startswith("~")
-        or pt.endswith(".py")
-        or pt.endswith(".sh")
-        or pt.endswith(".mjs")
-        or pt.endswith(".js")
-        or pt.endswith(".exe")
+        primer_token in EJECUTABLES_CONOCIDOS
+        or "/" in primer_token
+        or "\\" in primer_token
+        or primer_token.startswith("~")
+        or primer_token.startswith(".")
+        or primer_token.endswith((".py", ".sh", ".mjs", ".js", ".exe"))
     )
     if not es_ejecutable:
         return False, f"primer token '{primer_token}' no es ejecutable — parece prosa"
-    if exigir_cobertura and "--cov-fail-under" not in comp:
+
+    ext = _fuera_de_comillas(comp)
+    if primer_token not in ("SELECT", "EXPLAIN"):
+        for i, c in enumerate(ext):
+            if c == "(" and (i == 0 or ext[i - 1] != "$"):
+                return False, "texto libre con parentesis: la comprobacion debe ser un comando puro"
+
+    pipe_indices = [i for i, t in enumerate(tokens) if t == "|"]
+    if pipe_indices:
+        last_pipe = pipe_indices[-1]
+        if last_pipe + 1 < len(tokens):
+            ultimo_cmd = tokens[last_pipe + 1]
+            if ultimo_cmd in COMANDOS_TRIVIALES:
+                return False, f"pipe a comando trivial '{ultimo_cmd}'"
+
+    if exigir_cobertura:
         ejecuta_pytest = (
-            pt == "pytest"
-            or (pt in ("python", "python3") and "-m pytest" in comp)
-            or (pt.endswith(".exe") and "-m pytest" in comp)
+            primer_token == "pytest"
+            or (primer_token in ("python", "python3") and "pytest" in tokens)
         )
         if ejecuta_pytest:
-            return False, "pytest sin --cov-fail-under: bateria incompleta para tarea de codigo"
+            cov_value = None
+            for i, t in enumerate(tokens):
+                if t.startswith("--cov-fail-under="):
+                    try:
+                        cov_value = int(t.split("=", 1)[1])
+                    except ValueError:
+                        return False, f"--cov-fail-under valor no numerico: '{t}'"
+                    break
+                elif t == "--cov-fail-under" and i + 1 < len(tokens):
+                    try:
+                        cov_value = int(tokens[i + 1])
+                    except ValueError:
+                        return False, f"--cov-fail-under valor no numerico: '{tokens[i + 1]}'"
+                    break
+            if cov_value is None:
+                return False, "pytest sin --cov-fail-under: bateria incompleta"
+            if cov_value < COV_UMBRAL_MINIMO:
+                return False, f"--cov-fail-under={cov_value} < {COV_UMBRAL_MINIMO}: umbral insuficiente"
+
+            for t in tokens:
+                if t == "-k":
+                    return False, "-k selecciona tests: la bateria completa debe pasar"
+                if "::" in t:
+                    return False, "'::' selecciona un solo test: la bateria completa debe pasar"
+
     return True, "ok"
 
 
@@ -188,7 +310,9 @@ def main() -> None:
     ap.add_argument("--actor", default=ACTOR)
 
     ap.add_argument("--sin-exigir-cobertura", action="store_true",
-                    help="no exigir --cov-fail-under en pytest (para tareas no-codigo)")
+                    help="no exigir --cov-fail-under en pytest (solo lineas_de_proceso)")
+    ap.add_argument("--motivo",
+                    help="motivo obligatorio cuando se usa --sin-exigir-cobertura")
     ap.add_argument("--auditar-deuda", action="store_true",
                     help="listar requisitos existentes con comprobacion no conforme")
     args = ap.parse_args()
@@ -213,6 +337,17 @@ def main() -> None:
 
     if not args.sigla or not args.linea or not args.spec:
         sys.exit("[FALLO] se requiere sigla, linea y spec (usa --auditar-deuda para auditar sin cargar)")
+
+    if args.sin_exigir_cobertura:
+        lineas_nc = _lineas_no_codigo()
+        if args.sigla not in lineas_nc:
+            sys.exit(
+                f"[FALLO] --sin-exigir-cobertura solo para lineas_de_proceso "
+                f"declaradas en oferta.yaml ({', '.join(sorted(lineas_nc))}); "
+                f"{args.sigla} no es una de ellas"
+            )
+        if not args.motivo:
+            sys.exit("[FALLO] --sin-exigir-cobertura requiere --motivo")
 
     spec_path = PLANTILLA_DIR / args.spec
     if not spec_path.exists():
@@ -315,6 +450,10 @@ def main() -> None:
             f"NUEVO ears: {ears!r} · NUEVO comprobacion: {comprobacion!r}"
         ) if existente else None
 
+        sin_cob_detalle = ""
+        if args.sin_exigir_cobertura:
+            sin_cob_detalle = f" · sin_exigir_cobertura=1, motivo={args.motivo!r}"
+
         if existente:
             conn.execute(
                 "UPDATE requisito SET ears=?, comprobacion=? WHERE plan_id=? AND ref=?",
@@ -323,6 +462,7 @@ def main() -> None:
             accion = "requisito_actualizado"
             detalle = (
                 f"{ref} · spec_sha: {spec_sha[:12]} · autor: {spec_autor} · {viejo_nuevo}"
+                f"{sin_cob_detalle}"
             )
             print(f"[update] {plan_id} {ref}")
 
@@ -353,7 +493,7 @@ def main() -> None:
             accion = "requisito_cargado"
             detalle = (
                 f"{ref} · spec_sha: {spec_sha[:12]} · autor: {spec_autor} · "
-                f"ears: {ears!r} · comprobacion: {comprobacion!r}"
+                f"ears: {ears!r} · comprobacion: {comprobacion!r}{sin_cob_detalle}"
             )
             print(f"[insert] {plan_id} {ref}")
 
