@@ -1,6 +1,6 @@
 # PLAN-CS-J1 — Jev como segunda opinión de otra familia: texto dictado por el lead
 
-Versión 1 · 21-sep-2026 · autor: 00-lead · origen: orden de Carlos del 21-sep ("Jev incorporado en los procesos"), Requerimientos/JEV/informe-viabilidad-jev-sypnose.md y 11-JEV/PLAN-JEV.md v2.
+Versión 2 · 21-sep-2026 (v1 sha256 ce6adb45942e4e4a25aa08075c63185d6e57db04471dff5e5696c9d63e506c65, en git 656dd90, nunca cargada en el registro; v2 amplía R3 por orden de Carlos: "se debería ver Jev en la plantilla, poder mostrar qué hace") · autor: 00-lead · origen: orden de Carlos del 21-sep ("Jev incorporado en los procesos"), Requerimientos/JEV/informe-viabilidad-jev-sypnose.md y 11-JEV/PLAN-JEV.md v2.
 El arquitecto abre el plan y carga estos requisitos LITERAL como operador (tareas sin verificada_por). El veredicto lo dan verificadores Opus del lead. Formato canónico de comprobación.
 
 Plan: PLAN-CS-J1 · afecta: sol:coforge:sypnose-plantilla · dueño: H:carlos (por delegación registrada 22656/22676).
@@ -32,7 +32,7 @@ Examen del verificador (decide el veredicto): ataques sobre copia: opinión sin 
 ## R3 — La segunda opinión en la vista (ejecutor: 09-sypnose-vista)
 
 EARS:
-Cuando una tarea tenga una opinión de S:jev, la vista DEBE mostrar en esa tarea "Segunda opinión (Jev, otra familia de modelo)" con la nota, si coincide o DISCREPA con el veredicto del verificador y el enlace a su evidencia; la portada DEBE mostrar en la plataforma agéntica la pieza "evaluador barato de otra familia" con los números MEDIDOS por nosotros (tareas opinadas, coincidencias, discrepancias, coste total, latencia media) y la frase literal "no es juez: en las evaluaciones de su fabricante acierta menos que Opus 5"; las tareas con discrepancia DEBEN aparecer primero en la lista de lo pendiente de firma; y sin opiniones cargadas la vista NO DEBE mostrar nada de Jev.
+Cuando una tarea tenga una opinión de S:jev, la vista DEBE mostrar en esa tarea "Segunda opinión (Jev, otra familia de modelo)" con la nota, si coincide o DISCREPA con el veredicto del verificador y el enlace a su evidencia, y al desplegarla DEBE enseñar qué hizo Jev: cada pregunta del banco congelado con su probabilidad, las abstenciones, cuál fue el eslabón más débil, el modelo sellado, el commit del banco, la latencia y el coste; la portada DEBE mostrar el lugar de Jev en el flujo como una cadena de cinco pasos (entrega · comprobación determinista del caparazón · veredicto del verificador independiente · segunda opinión probabilística de Jev · firma humana), con un paso de modo demostración que abra una tarea real opinada; la portada DEBE mostrar en la plataforma agéntica la pieza "evaluador barato de otra familia" con los números MEDIDOS por nosotros (tareas opinadas, coincidencias, discrepancias, coste total, latencia media) y la frase literal "no es juez: en las evaluaciones de su fabricante acierta menos que Opus 5"; las tareas con discrepancia DEBEN aparecer primero en la lista de lo pendiente de firma; y sin opiniones cargadas la vista NO DEBE mostrar nada de Jev.
 
 Comprobación:
 node --test tests/opinion-jev.test.mjs
