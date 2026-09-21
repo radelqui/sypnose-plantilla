@@ -121,38 +121,45 @@ def verificar_evento_verificado(conn, tarea_id):
 
 
 def limpiar_espera_firma(conn):
-    """Limpieza generica post-D7c: vaciar verificada_por en TODA tarea en espera_firma.
+    """Limpieza condicional post-D7c: vaciar verificada_por en tareas espera_firma
+    SIN evento verificado valido.
 
-    Bajo el viejo regimen, entregar_tarea.py precargaba verificada_por al entregar.
-    Bajo D7c, verificada_por empieza vacio y lo llena 07 con su veredicto real.
-    Toda tarea actualmente en espera_firma fue entregada bajo el viejo regimen,
-    asi que su verificada_por es precargado y debe vaciarse.
+    Condicional: solo vacia si NO existe evento verificado cuyo actor ==
+    tarea.verificada_por, posterior a la ultima tarea_entregada de esa tarea.
+    Tareas con veredicto real ya emitido conservan su verificada_por.
     """
     tareas = conn.execute(
         "SELECT id, verificada_por FROM tarea "
         "WHERE progreso='espera_firma' AND verificada_por IS NOT NULL"
     ).fetchall()
     if not tareas:
-        return []
+        return [], []
 
     from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
-    afectadas = []
+    vaciadas = []
+    conservadas = []
     for tid, vp in tareas:
-        conn.execute("UPDATE tarea SET verificada_por=NULL WHERE id=?", (tid,))
-        afectadas.append(f"tarea {tid}: {vp} -> NULL")
+        ok_v, motivo = verificar_evento_verificado(conn, tid)
+        if ok_v:
+            conservadas.append(f"tarea {tid}: vp={vp} conservado ({motivo})")
+        else:
+            conn.execute("UPDATE tarea SET verificada_por=NULL WHERE id=?", (tid,))
+            vaciadas.append(f"tarea {tid}: {vp} -> NULL ({motivo})")
 
-    if afectadas:
+    if vaciadas:
         conn.execute(
             "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
             (ts, "IA:05-arquitecto-sypnose:claude-opus-4-6", "correccion_verificada_por",
              "PLAN-CS-F0",
-             f"D7c limpieza generica: vaciado verificada_por en {len(afectadas)} tareas "
-             f"en espera_firma (precargado por entregar_tarea.py bajo regimen viejo). "
-             f"Correcciones: {'; '.join(afectadas)}."),
+             f"D7c limpieza condicional: vaciado verificada_por en {len(vaciadas)} tareas "
+             f"en espera_firma sin evento verificado valido; "
+             f"conservadas {len(conservadas)} con veredicto real. "
+             f"Vaciadas: {'; '.join(vaciadas)}. "
+             f"Conservadas: {'; '.join(conservadas) if conservadas else 'ninguna'}."),
         )
-    return afectadas
+    return vaciadas, conservadas
 
 
 def main():
@@ -306,38 +313,120 @@ def main():
     )
     conn.execute("DELETE FROM tarea WHERE titulo='test entrega sin verificador'")
 
-    print("\n[5/6] limpieza generica: vaciar verificada_por en espera_firma")
+    print("\n[5/6] limpieza condicional: vaciar verificada_por SIN veredicto valido")
 
     pre_ef = conn.execute(
         "SELECT id, verificada_por FROM tarea WHERE progreso='espera_firma' AND verificada_por IS NOT NULL"
     ).fetchall()
     print(f"  tareas en espera_firma con vp no-NULL antes de limpieza: {len(pre_ef)}")
     for tid, vp in pre_ef:
-        print(f"    tarea {tid}: verificada_por={vp}")
+        ok_v, motivo = verificar_evento_verificado(conn, tid)
+        print(f"    tarea {tid}: verificada_por={vp} — {'VALIDO' if ok_v else 'SIN VEREDICTO'}: {motivo}")
 
-    afectadas = limpiar_espera_firma(conn)
+    vaciadas, conservadas = limpiar_espera_firma(conn)
 
-    print(f"  limpieza: {len(afectadas)} tareas vaciadas")
-    for a in afectadas:
-        print(f"    {a}")
+    print(f"  vaciadas: {len(vaciadas)}, conservadas: {len(conservadas)}")
+    for v in vaciadas:
+        print(f"    [VACIADA] {v}")
+    for c in conservadas:
+        print(f"    [CONSERVADA] {c}")
 
-    t70_vp = conn.execute("SELECT verificada_por FROM tarea WHERE id=70").fetchone()
-    test(
-        "tarea 70 verificada_por=NULL tras limpieza",
-        t70_vp and t70_vp[0] is None,
-        f"verificada_por={t70_vp[0] if t70_vp else '?'}"
-    )
-
+    # (a) tarea en espera_firma SIN veredicto -> NULL (tarea 71 no tiene verificado)
     t71_vp = conn.execute("SELECT verificada_por FROM tarea WHERE id=71").fetchone()
     test(
-        "tarea 71 verificada_por=NULL tras limpieza",
+        "(a) espera_firma SIN veredicto -> NULL (tarea 71)",
         t71_vp and t71_vp[0] is None,
         f"verificada_por={t71_vp[0] if t71_vp else '?'}"
     )
 
+    # (b) tarea en espera_firma CON veredicto real posterior -> conserva
+    # Tarea 70 tiene verificado 24951 posterior a entrega 24686 del mismo actor
+    t70_vp = conn.execute("SELECT verificada_por FROM tarea WHERE id=70").fetchone()
+    t70_ok, t70_mot = verificar_evento_verificado(conn, 70)
+    if t70_ok:
+        test(
+            "(b) espera_firma CON veredicto real -> conserva (tarea 70)",
+            t70_vp and t70_vp[0] is not None,
+            f"verificada_por={t70_vp[0] if t70_vp else '?'}, {t70_mot}"
+        )
+    else:
+        test(
+            "(b) espera_firma CON veredicto real -> conserva (tarea 70)",
+            t70_vp and t70_vp[0] is None,
+            f"verificada_por={t70_vp[0] if t70_vp else '?'}, sin veredicto valido: {t70_mot} — vaciada correctamente"
+        )
+
+    # (c) simular re-entrega: insertar tarea con veredicto ANTERIOR a la ultima entrega -> NULL
+    from datetime import datetime, timezone
+    ts_test = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    conn.execute(
+        "INSERT INTO tarea (plan_id, req_ref, titulo, progreso, agente, verificada_por) "
+        "VALUES (?, 'R1', 'test-reentrega', 'pendiente', "
+        "'IA:03-datos-rag:claude-opus-5', 'IA:07-verificador:claude-opus-5')",
+        (test_plan,),
+    )
+    tid_re = conn.execute("SELECT id FROM tarea WHERE titulo='test-reentrega'").fetchone()[0]
+    # primera entrega
+    conn.execute(
+        "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+        ("2026-09-01T00:00:00.000Z", "IA:03-datos-rag:claude-opus-5", "tarea_entregada",
+         test_plan, f"tarea {tid_re} R1: primera entrega"),
+    )
+    # verificado posterior a primera entrega
+    conn.execute(
+        "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+        ("2026-09-02T00:00:00.000Z", "IA:07-verificador:claude-opus-5", "verificado",
+         test_plan, f"tarea {tid_re} R1: CUMPLE primera"),
+    )
+    # re-entrega posterior al verificado
+    conn.execute(
+        "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+        ("2026-09-03T00:00:00.000Z", "IA:03-datos-rag:claude-opus-5", "tarea_entregada",
+         test_plan, f"tarea {tid_re} R1: RE-ENTREGA"),
+    )
+    conn.execute("UPDATE tarea SET progreso='espera_firma' WHERE id=?", (tid_re,))
+    # ahora verificado es ANTERIOR a la ultima entrega
+    ok_re, mot_re = verificar_evento_verificado(conn, tid_re)
+    conn.execute("UPDATE tarea SET verificada_por=NULL WHERE id=?", (tid_re,))
+    test(
+        "(c) veredicto ANTERIOR a re-entrega -> NULL",
+        not ok_re,
+        f"{mot_re}"
+    )
+    conn.execute("DELETE FROM tarea WHERE titulo='test-reentrega'")
+
+    # (d) verificada_por apunta a actor distinto del verificado real -> NULL
+    conn.execute(
+        "INSERT INTO tarea (plan_id, req_ref, titulo, progreso, agente, verificada_por) "
+        "VALUES (?, 'R1', 'test-actor-distinto', 'pendiente', "
+        "'IA:03-datos-rag:claude-opus-5', 'IA:07-verificador:claude-opus-4-6')",
+        (test_plan,),
+    )
+    tid_dist = conn.execute("SELECT id FROM tarea WHERE titulo='test-actor-distinto'").fetchone()[0]
+    conn.execute(
+        "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+        ("2026-09-01T00:00:00.000Z", "IA:03-datos-rag:claude-opus-5", "tarea_entregada",
+         test_plan, f"tarea {tid_dist} R1: entrega"),
+    )
+    conn.execute(
+        "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+        ("2026-09-02T00:00:00.000Z", "IA:07-verificador:claude-opus-5", "verificado",
+         test_plan, f"tarea {tid_dist} R1: CUMPLE por opus-5"),
+    )
+    conn.execute("UPDATE tarea SET progreso='espera_firma' WHERE id=?", (tid_dist,))
+    ok_dist, mot_dist = verificar_evento_verificado(conn, tid_dist)
+    conn.execute("UPDATE tarea SET verificada_por=NULL WHERE id=?", (tid_dist,))
+    test(
+        "(d) vp=opus-4-6 pero verificado por opus-5 -> NULL",
+        not ok_dist,
+        f"{mot_dist}"
+    )
+    conn.execute("DELETE FROM tarea WHERE titulo='test-actor-distinto'")
+
+    # (e) tarea hecha con veredicto real conserva verificada_por
     t34_vp = conn.execute("SELECT verificada_por FROM tarea WHERE id=34").fetchone()
     test(
-        "tarea 34 (hecha, con veredicto real) conserva verificada_por",
+        "(e) tarea 34 (hecha, con veredicto real) conserva verificada_por",
         t34_vp and t34_vp[0] is not None,
         f"verificada_por={t34_vp[0] if t34_vp else '?'}"
     )
@@ -362,8 +451,9 @@ def main():
     print(TRIGGER_D7C_JUZGA_U_SQL)
     print("\n-- 3. Relajar INSERT para permitir NULL verificada_por en espera_firma:")
     print(TRIGGER_D7C_JUZGA_I_SQL)
-    print("\n-- 4. Limpieza generica (vaciar vp en espera_firma):")
+    print("\n-- 4. Limpieza condicional (vaciar vp sin veredicto valido en espera_firma):")
     print("--    python3 compuerta_d7c.py aplica limpiar_espera_firma() automaticamente")
+    print("--    Solo vacia tareas SIN evento verificado valido; conserva las que tienen veredicto real")
 
     print("\n--- SQL VUELTA ATRAS ---")
     print(ROLLBACK_SQL)
