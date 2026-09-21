@@ -1,18 +1,17 @@
 """Carga un requisito desde un spec.md al registro SYPNOSE.
 
-Lee la sección R<n> del spec, extrae EARS (blockquote) y comprobación (bash fence),
-verifica autoría (Chat: trailer = rol en roles_por_linea), pasa la barrera,
-hace backup_registro() ANTES de escribir, y registra evento con VIEJO/NUEVO/sha/autor.
-Idempotente: si EARS y comprobación ya coinciden, 0 cambios.
-Si el requisito cambia y hay tareas en espera_firma o hecha, aborta (requiere decisión humana).
-
-F0.3 v2: validacion robusta de comprobacion con shlex.
-  - Prohibidos fuera de comillas: # ; && || \\n > < -> == ()
+F0.3 v3: validacion robusta con formato canonico.
+  Formato: [cd "<ruta>" && ]<comando>[ → <valor esperado>]
+  - cd prefix y → sufijo separados antes de validar el comando.
+  - Basename sin extension para detectar ejecutables (.exe, paths).
+  - Prohibidos fuera de comillas: # ; && || \\n > < -> == $(…) `…` ${…}
+  - SQL (SELECT/EXPLAIN): > y < permitidos (operadores de comparacion, no redireccion).
+  - Asignaciones de entorno (VAR=val) delante del comando: rechazadas.
   - Primer token: ejecutable conocido o ruta (nunca prosa).
   - Comandos triviales rechazados: echo, true, test, :, bash/sh -c trivial.
-  - pytest: --cov-fail-under como argumento real con valor >= 85; -k y :: prohibidos.
-  - --sin-exigir-cobertura: solo lineas_de_proceso de oferta.yaml, con --motivo.
-  - --auditar-deuda: listar requisitos heredados no conformes sin reescribirlos.
+  - pytest: --cov-fail-under como token real >= 85; -k (incluso pegado) y :: prohibidos.
+  - --sin-exigir-cobertura: solo lineas_de_proceso con --motivo.
+  - --auditar-deuda: listar no conformes sin reescribir.
 
     python3 cargar_requisito.py --db ~/sypnose-f1/registry.db T01 R1 specs/T01/spec.md
     python3 cargar_requisito.py --db ~/sypnose-f1/registry.db --auditar-deuda
@@ -64,7 +63,6 @@ def cargar_yaml_mapas() -> tuple[dict, dict]:
 
 
 def _fuera_de_comillas(texto: str) -> str:
-    """Returns only the text outside of single/double quotes."""
     out, q = [], None
     for c in texto:
         if q is None:
@@ -77,8 +75,35 @@ def _fuera_de_comillas(texto: str) -> str:
     return "".join(out)
 
 
-def _detectar_prohibido(comp: str) -> str | None:
-    """Detect prohibited shell metacharacters and prose indicators outside quotes."""
+def _separar_formato_canonico(comp: str) -> tuple[str, str | None, str | None]:
+    """Parse [cd "<ruta>" && ]<comando>[ → <valor esperado>].
+    Returns (comando, cd_prefix, expected_value).
+    """
+    comando = comp
+    cd_prefix = None
+    expected = None
+
+    m = re.match(r'^cd\s+"[^"]*"\s+&&\s+', comando)
+    if m:
+        cd_prefix = m.group()
+        comando = comando[m.end():]
+
+    q = None
+    for i, c in enumerate(comando):
+        if q is None:
+            if c in ("'", '"'):
+                q = c
+            elif comando[i:].startswith(" → "):
+                expected = comando[i + 3:].strip()
+                comando = comando[:i].strip()
+                break
+        elif c == q:
+            q = None
+
+    return comando, cd_prefix, expected
+
+
+def _detectar_prohibido(comp: str, *, es_sql: bool = False) -> str | None:
     ext = _fuera_de_comillas(comp)
     if "\n" in ext:
         return "salto de linea (multi-comando)"
@@ -96,35 +121,73 @@ def _detectar_prohibido(comp: str) -> str | None:
         return "prosa con flecha (->)"
     if "==" in ext:
         return "prosa con comparacion (==)"
-    if ">" in ext:
-        return "redireccion (>)"
-    if "<" in ext:
-        return "redireccion (<)"
+    if not es_sql:
+        if ">" in ext:
+            return "redireccion (>)"
+        if "<" in ext:
+            return "redireccion (<)"
     return None
 
 
+def _detectar_sustitucion(comp: str) -> str | None:
+    """Reject $(…), backticks and ${…} outside single quotes."""
+    sq = False
+    i = 0
+    while i < len(comp):
+        c = comp[i]
+        if sq:
+            if c == "'":
+                sq = False
+        elif c == "'":
+            sq = True
+        elif c == "`":
+            return "sustitucion de comando con backticks"
+        elif c == "$" and i + 1 < len(comp):
+            nc = comp[i + 1]
+            if nc == "(":
+                return "sustitucion de comando $()"
+            if nc == "{":
+                return "expansion de variable ${}"
+        i += 1
+    return None
+
+
+def _basename_sin_ext(token: str) -> str:
+    base = Path(token).name if ("/" in token or "\\" in token) else token
+    if base.lower().endswith((".exe", ".cmd", ".bat")):
+        base = base.rsplit(".", 1)[0]
+    return base
+
+
 def _lineas_no_codigo() -> set[str]:
-    """Lines declared as process (not code) in oferta.yaml."""
     datos = yaml.safe_load(OFERTA_YAML.read_text(encoding="utf-8"))
     return set(datos.get("lineas_de_proceso", []))
 
 
 def validar_comprobacion(comp: str, exigir_cobertura: bool = True) -> tuple[bool, str]:
-    """Validates comp is a single executable command, not prose or bypass.
-    Returns (ok, motivo).
-    """
     comp = comp.strip()
     if not comp:
         return False, "comprobacion vacia"
     if comp.lower() in ("true", "false"):
         return False, f"literal '{comp}' no demuestra nada"
 
-    prohibido = _detectar_prohibido(comp)
+    comando, cd_prefix, expected = _separar_formato_canonico(comp)
+    if not comando:
+        return False, "comprobacion sin comando tras separar formato canonico"
+
+    primer_word = comando.split()[0].upper() if comando.split() else ""
+    es_sql = primer_word in ("SELECT", "EXPLAIN")
+
+    prohibido = _detectar_prohibido(comando, es_sql=es_sql)
     if prohibido:
         return False, f"prohibido: {prohibido}"
 
+    sub = _detectar_sustitucion(comando)
+    if sub:
+        return False, f"prohibido: {sub}"
+
     try:
-        lex = shlex.shlex(comp, posix=True)
+        lex = shlex.shlex(comando, posix=True)
         lex.whitespace_split = True
         lex.commenters = ""
         tokens = list(lex)
@@ -135,30 +198,28 @@ def validar_comprobacion(comp: str, exigir_cobertura: bool = True) -> tuple[bool
         return False, "comprobacion vacia tras parseo"
 
     primer_token = tokens[0]
+
     if "=" in primer_token and not primer_token.startswith("-") and not primer_token.startswith("$"):
-        if len(tokens) > 1:
-            primer_token = tokens[1]
-        else:
-            return False, "solo asignacion de variable, no hay comando"
+        return False, f"asignacion de entorno '{primer_token.split('=')[0]}=' delante del comando"
 
-    pt_base = Path(primer_token).name if "/" in primer_token else primer_token
+    pt = _basename_sin_ext(primer_token)
 
-    if pt_base in COMANDOS_TRIVIALES:
-        return False, f"comando trivial '{pt_base}' no demuestra conformidad"
+    if pt in COMANDOS_TRIVIALES:
+        return False, f"comando trivial '{pt}' no demuestra conformidad"
 
-    if pt_base in ("bash", "sh"):
+    if pt in ("bash", "sh"):
         try:
             idx_c = next(i for i, t in enumerate(tokens) if t == "-c")
             if idx_c + 1 < len(tokens):
                 inner = tokens[idx_c + 1].strip()
                 inner_first = inner.split()[0] if inner.split() else inner
                 if inner_first in COMANDOS_TRIVIALES or inner in ("exit 0", "exit", "false"):
-                    return False, f"{pt_base} -c con comando trivial: '{inner}'"
+                    return False, f"{pt} -c con comando trivial: '{inner}'"
         except StopIteration:
             pass
 
     es_ejecutable = (
-        primer_token in EJECUTABLES_CONOCIDOS
+        pt in EJECUTABLES_CONOCIDOS
         or "/" in primer_token
         or "\\" in primer_token
         or primer_token.startswith("~")
@@ -168,8 +229,8 @@ def validar_comprobacion(comp: str, exigir_cobertura: bool = True) -> tuple[bool
     if not es_ejecutable:
         return False, f"primer token '{primer_token}' no es ejecutable — parece prosa"
 
-    ext = _fuera_de_comillas(comp)
-    if primer_token not in ("SELECT", "EXPLAIN"):
+    ext = _fuera_de_comillas(comando)
+    if pt not in ("SELECT", "EXPLAIN"):
         for i, c in enumerate(ext):
             if c == "(" and (i == 0 or ext[i - 1] != "$"):
                 return False, "texto libre con parentesis: la comprobacion debe ser un comando puro"
@@ -178,14 +239,14 @@ def validar_comprobacion(comp: str, exigir_cobertura: bool = True) -> tuple[bool
     if pipe_indices:
         last_pipe = pipe_indices[-1]
         if last_pipe + 1 < len(tokens):
-            ultimo_cmd = tokens[last_pipe + 1]
-            if ultimo_cmd in COMANDOS_TRIVIALES:
-                return False, f"pipe a comando trivial '{ultimo_cmd}'"
+            ultimo = _basename_sin_ext(tokens[last_pipe + 1])
+            if ultimo in COMANDOS_TRIVIALES:
+                return False, f"pipe a comando trivial '{ultimo}'"
 
     if exigir_cobertura:
         ejecuta_pytest = (
-            primer_token == "pytest"
-            or (primer_token in ("python", "python3") and "pytest" in tokens)
+            pt == "pytest"
+            or (pt in ("python", "python3") and "pytest" in tokens)
         )
         if ejecuta_pytest:
             cov_value = None
@@ -208,7 +269,7 @@ def validar_comprobacion(comp: str, exigir_cobertura: bool = True) -> tuple[bool
                 return False, f"--cov-fail-under={cov_value} < {COV_UMBRAL_MINIMO}: umbral insuficiente"
 
             for t in tokens:
-                if t == "-k":
+                if t == "-k" or (t.startswith("-k") and not t.startswith("--k")):
                     return False, "-k selecciona tests: la bateria completa debe pasar"
                 if "::" in t:
                     return False, "'::' selecciona un solo test: la bateria completa debe pasar"
@@ -217,9 +278,6 @@ def validar_comprobacion(comp: str, exigir_cobertura: bool = True) -> tuple[bool
 
 
 def auditar_deuda(conn) -> list[tuple[str, str, str, str]]:
-    """Escanea todos los requisitos y devuelve los no conformes.
-    Returns list of (plan_id, ref, comprobacion, motivo).
-    """
     rows = conn.execute(
         "SELECT plan_id, ref, comprobacion FROM requisito ORDER BY plan_id, ref"
     ).fetchall()

@@ -1,7 +1,7 @@
-"""F0.3 v2: test de validacion de comprobacion en cargar_requisito.py.
+"""F0.3 v3: test de validacion de comprobacion en cargar_requisito.py.
 
 Baterias:
-(1) validar_comprobacion: 30+ rechazos + 16 aceptados + sin_exigir_cobertura
+(1) validar_comprobacion: rechazos + aceptados + sin_exigir_cobertura
 (2) auditar_deuda: verifica cuenta y mutaciones sobre copia
 (3) requisitos dummy: inserta malos, detecta, verifica motivo
 
@@ -32,7 +32,7 @@ def test_validar_comprobacion():
         ("CUMPLE si el test pasa", "prosa con CUMPLE"),
         ("pytest tests/", "pytest sin --cov-fail-under"),
         ("python3 -m pytest tests/", "python3 -m pytest sin --cov-fail-under"),
-        # (1) shell metacharacter bypasses
+        # (a) shell metacharacter bypasses
         ("pytest tests/  # --cov-fail-under=85", "flag en comentario (#)"),
         ("pytest tests/ --cov-fail-under=85 || true", "supresion de error (||)"),
         ("pytest tests/ --cov-fail-under=85 ; exit 0", "separador (;)"),
@@ -41,29 +41,43 @@ def test_validar_comprobacion():
         ("pytest tests/ --cov-fail-under=85 2>/dev/null", "redireccion stderr"),
         ("python3 test.py < input.txt", "redireccion stdin"),
         ("pytest tests/\ntrue", "salto de linea con true"),
-        # (1) comandos triviales
+        # (a) comandos triviales
         ("echo CUMPLE", "echo trivial"),
         ("test 1 = 1", "test trivial"),
         (": noop", "null command (:)"),
         ("bash -c true", "bash -c trivial"),
         ("sh -c 'exit 0'", "sh -c exit 0"),
         ("bash -c echo", "bash -c echo"),
-        # (1) --cov-fail-under umbral
+        # (a) --cov-fail-under umbral
         ("pytest tests/ --cov-fail-under=0", "umbral 0"),
         ("pytest tests/ --cov-fail-under=50", "umbral 50"),
         ("pytest tests/ --cov-fail-under=84", "umbral 84 (justo debajo)"),
-        # (3) seleccion de tests
+        # (a) seleccion de tests
         ("pytest tests/ --cov-fail-under=85 -k test_one", "-k selecciona test"),
         ("pytest tests/test_x.py::test_one --cov-fail-under=85", ":: selecciona test"),
-        # (2) prosa con primer token ejecutable
-        ("SELECT COUNT(*) FROM tarea WHERE progreso='espera_firma' → 0",
-         "SQL con flecha unicode"),
+        # (a) basename bypass — v3
+        (".venv/Scripts/pytest.exe tests/", "basename pytest.exe sin --cov-fail-under"),
+        ("/home/x/.venv/bin/pytest tests/ -k foo", "ruta completa pytest con -k"),
+        ("/usr/bin/python3 -m pytest tests/", "ruta completa python3 sin --cov-fail-under"),
+        # (a) -k attached — v3
+        ("pytest tests/ --cov-fail-under=85 -kconsultar", "-k pegado sin espacio"),
+        ("pytest tests/ --cov-fail-under=85 -k=pattern", "-k= con valor"),
+        # (a) env assignment — v3
+        ("ENV_VAR=x python3 test.py", "asignacion entorno delante del comando"),
+        ('PYTEST_ADDOPTS="-k x" pytest tests/ --cov-fail-under=85', "env PYTEST_ADDOPTS inyeccion"),
+        ("FOO=bar pytest tests/ --cov-fail-under=85", "env prefix antes de pytest"),
+        # (b) prosa con primer token ejecutable
         ('git log --format=%B | grep -c "^Chat:" == git rev-list --count',
          "git con comparacion =="),
         ("tests/integracion/README.md (comando psql) ejecutado en CI",
          "ruta con parentesis prosa"),
         ("gh run list --limit 1 + gh run view <id> (job deploy)",
          "gh con < redireccion/prosa"),
+        # (c) command substitution — v3
+        ("python3 $(cat flag.txt)", "sustitucion $()"),
+        ("python3 `cat flag.txt`", "sustitucion backticks"),
+        ("python3 ${HOME}/test.py", "expansion ${} fuera de comillas simples"),
+        ('python3 "$(cat flag.txt)"', "sustitucion $() dentro de comillas dobles"),
         # pipe a trivial
         ("curl -sf url | echo CUMPLE", "pipe a echo trivial"),
         ("git log | true", "pipe a true"),
@@ -90,10 +104,43 @@ def test_validar_comprobacion():
         ("/usr/bin/python3 test.py", "ruta absoluta"),
         ("~/scripts/check.sh", "ruta con tilde"),
         ("EXPLAIN ANALYZE SELECT 1", "EXPLAIN SQL"),
-        ("ENV_VAR=x python3 test.py", "env prefix + ejecutable"),
         ('python3 -c "assert 1 > 0"', "> dentro de comillas OK"),
         ("grep -E 'readOnlyRootFilesystem: true' k8s/deployment.yaml", "grep con patron"),
         ("curl -sf url | grep -q pattern", "pipe legitimo"),
+        # (b) canonical format cd prefix — v3
+        ('cd "tests/integracion" && pytest tests/ --cov-fail-under=85',
+         "cd prefix + pytest con cobertura"),
+        ('cd "/app" && python3 test_algo.py', "cd prefix + python3 script"),
+        # (b) canonical format → suffix — v3
+        ("SELECT COUNT(*) FROM tarea → 0", "SQL con → esperado"),
+        ("SELECT COUNT(*) FROM tarea WHERE progreso='espera_firma' → 0",
+         "SQL con → y WHERE clause"),
+        ('git log -1 --format="%H" → abc123', "git log con → esperado"),
+        ("git diff --stat → \"\"", "git diff con → vacio"),
+        # (b) parentheses in quoted args — v3
+        ('git log -1 --format="%(trailers:key=Chat,valueonly)" -- specs/T06/spec.md',
+         "parentesis dentro de comillas dobles"),
+        # (a) basename with --cov-fail-under — v3
+        (".venv/Scripts/pytest.exe tests/ --cov-fail-under=85",
+         "basename pytest.exe con cobertura"),
+        ("/home/x/.venv/bin/pytest tests/ --cov-fail-under=85",
+         "ruta completa pytest con cobertura"),
+        ("/usr/bin/python3 -m pytest tests/ --cov-fail-under=85",
+         "ruta completa python3 pytest con cobertura"),
+        # (c) command substitution inside single quotes — v3
+        ("python3 -c 'echo $(date)'", "$() dentro de comillas simples OK"),
+        ("grep '${pattern}' file.txt", "${} dentro de comillas simples OK"),
+        # (d) SQL comparison operators — v3
+        ("SELECT COUNT(*) FROM requisito WHERE ref<>'R0'",
+         "SQL <> not-equal operator"),
+        ("SELECT COUNT(*) FROM requisito WHERE ref<>'R0' → ≥1",
+         "SQL <> with canonical expected value"),
+        ("SELECT COUNT(*) FROM tarea WHERE coste > 0",
+         "SQL > comparison"),
+        ("SELECT COUNT(*) FROM tarea WHERE coste > 0 → 5",
+         "SQL > with canonical expected"),
+        ("EXPLAIN SELECT * FROM tarea WHERE id < 100",
+         "EXPLAIN with < comparison"),
     ]
 
     for comp, desc in aceptados:
@@ -224,7 +271,7 @@ def test_requisitos_dummy(db_path: Path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="F0.3 v2: test validacion comprobacion")
+    ap = argparse.ArgumentParser(description="F0.3 v3: test validacion comprobacion")
     ap.add_argument("--db", required=True, help="ruta a COPIA de registry.db")
     args = ap.parse_args()
 
@@ -267,7 +314,7 @@ def main():
         print(f"[FALLO] {total_fallos} fallos")
         sys.exit(1)
     else:
-        print(f"[OK] F0.3 v2 — 3 baterias, 0 fallos")
+        print(f"[OK] F0.3 v3 — 3 baterias, 0 fallos")
 
 
 if __name__ == "__main__":
