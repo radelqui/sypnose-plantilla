@@ -1,10 +1,14 @@
-"""Fase D7c: trigger INSERT gemelo + firmar.py exige evento verificado.
+"""Fase D7c: trigger INSERT gemelo + firmar.py exige evento verificado + limpieza generica.
 
 El trigger D7 existente (compuerta_d7_verificador) solo dispara en UPDATE.
 El INSERT (quien_ejecuta_no_juzga_i) solo comprueba agente != verificada_por
 sin mirar prefijo. D7c anade un trigger INSERT que restringe verificada_por
 igual que el de UPDATE (IA:07-verificador:* o H:*) y verifica que firmar.py
 exige evento verificado posterior a tarea_entregada con actor coincidente.
+
+Tras aplicar el DDL, limpieza generica: toda tarea en espera_firma tiene su
+verificada_por vaciado a NULL (bajo el viejo regimen lo precargaba
+entregar_tarea.py; bajo D7c, verificada_por empieza vacio y lo llena 07).
 
 Ejecutar sobre el servidor (donde vive registry.db):
     python3 compuerta_d7c.py --db ~/sypnose-f1/registry.db
@@ -116,9 +120,44 @@ def verificar_evento_verificado(conn, tarea_id):
     return True, f"evento verificado {verificado[0]} por {verificado[1]} posterior a entrega {entrega[0]}"
 
 
+def limpiar_espera_firma(conn):
+    """Limpieza generica post-D7c: vaciar verificada_por en TODA tarea en espera_firma.
+
+    Bajo el viejo regimen, entregar_tarea.py precargaba verificada_por al entregar.
+    Bajo D7c, verificada_por empieza vacio y lo llena 07 con su veredicto real.
+    Toda tarea actualmente en espera_firma fue entregada bajo el viejo regimen,
+    asi que su verificada_por es precargado y debe vaciarse.
+    """
+    tareas = conn.execute(
+        "SELECT id, verificada_por FROM tarea "
+        "WHERE progreso='espera_firma' AND verificada_por IS NOT NULL"
+    ).fetchall()
+    if not tareas:
+        return []
+
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+    afectadas = []
+    for tid, vp in tareas:
+        conn.execute("UPDATE tarea SET verificada_por=NULL WHERE id=?", (tid,))
+        afectadas.append(f"tarea {tid}: {vp} -> NULL")
+
+    if afectadas:
+        conn.execute(
+            "INSERT INTO evento (cuando, actor, accion, plan_id, detalle) VALUES (?,?,?,?,?)",
+            (ts, "IA:05-arquitecto-sypnose:claude-opus-4-6", "correccion_verificada_por",
+             "PLAN-CS-F0",
+             f"D7c limpieza generica: vaciado verificada_por en {len(afectadas)} tareas "
+             f"en espera_firma (precargado por entregar_tarea.py bajo regimen viejo). "
+             f"Correcciones: {'; '.join(afectadas)}."),
+        )
+    return afectadas
+
+
 def main():
     global ok, fail
-    ap = argparse.ArgumentParser(description="Fase D7c: INSERT gemelo + firmar check")
+    ap = argparse.ArgumentParser(description="Fase D7c: INSERT gemelo + firmar check + limpieza")
     ap.add_argument("--db", required=True, help="ruta a registry.db (solo lectura, se hace .backup)")
     args = ap.parse_args()
 
@@ -129,7 +168,7 @@ def main():
     with tempfile.NamedTemporaryFile(suffix="-compuerta-d7c.db", delete=False) as tmp:
         copia = Path(tmp.name)
 
-    print(f"[1/5] backup {db_path} -> {copia}")
+    print(f"[1/6] backup {db_path} -> {copia}")
     src = sqlite3.connect(str(db_path))
     dst = sqlite3.connect(str(copia))
     src.backup(dst)
@@ -141,7 +180,7 @@ def main():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
 
-    print("\n[2/5] crear trigger INSERT gemelo + relajar triggers espera_firma")
+    print("\n[2/6] crear trigger INSERT gemelo + relajar triggers espera_firma")
     conn.executescript(TRIGGER_D7C_INSERT_SQL)
     print("  trigger INSERT: compuerta_d7c_verificador_insert")
     conn.executescript(TRIGGER_D7C_JUZGA_U_SQL)
@@ -150,7 +189,7 @@ def main():
     print("  trigger INSERT: quien_ejecuta_no_juzga_i (permite NULL verificada_por)")
     print("  OK")
 
-    print("\n[3/5] tests del trigger INSERT (8 casos)")
+    print("\n[3/6] tests del trigger INSERT (8 casos)")
 
     test_plan = "PLAN-CS-F0"
     test_agente = "IA:03-datos-rag:claude-opus-5"
@@ -212,7 +251,7 @@ def main():
     except sqlite3.IntegrityError as e:
         test("INSERT acepta verificada_por=NULL (tarea nueva)", False, str(e))
 
-    print("\n[4/5] tests de la comprobacion firmar.py (evento verificado)")
+    print("\n[4/6] tests de la comprobacion firmar.py (evento verificado)")
 
     tareas_corregidas = conn.execute(
         "SELECT id, verificada_por, progreso FROM tarea "
@@ -267,10 +306,46 @@ def main():
     )
     conn.execute("DELETE FROM tarea WHERE titulo='test entrega sin verificador'")
 
+    print("\n[5/6] limpieza generica: vaciar verificada_por en espera_firma")
+
+    pre_ef = conn.execute(
+        "SELECT id, verificada_por FROM tarea WHERE progreso='espera_firma' AND verificada_por IS NOT NULL"
+    ).fetchall()
+    print(f"  tareas en espera_firma con vp no-NULL antes de limpieza: {len(pre_ef)}")
+    for tid, vp in pre_ef:
+        print(f"    tarea {tid}: verificada_por={vp}")
+
+    afectadas = limpiar_espera_firma(conn)
+
+    print(f"  limpieza: {len(afectadas)} tareas vaciadas")
+    for a in afectadas:
+        print(f"    {a}")
+
+    t70_vp = conn.execute("SELECT verificada_por FROM tarea WHERE id=70").fetchone()
+    test(
+        "tarea 70 verificada_por=NULL tras limpieza",
+        t70_vp and t70_vp[0] is None,
+        f"verificada_por={t70_vp[0] if t70_vp else '?'}"
+    )
+
+    t71_vp = conn.execute("SELECT verificada_por FROM tarea WHERE id=71").fetchone()
+    test(
+        "tarea 71 verificada_por=NULL tras limpieza",
+        t71_vp and t71_vp[0] is None,
+        f"verificada_por={t71_vp[0] if t71_vp else '?'}"
+    )
+
+    t34_vp = conn.execute("SELECT verificada_por FROM tarea WHERE id=34").fetchone()
+    test(
+        "tarea 34 (hecha, con veredicto real) conserva verificada_por",
+        t34_vp and t34_vp[0] is not None,
+        f"verificada_por={t34_vp[0] if t34_vp else '?'}"
+    )
+
     conn.close()
     copia.unlink(missing_ok=True)
 
-    print(f"\n[5/5] resultado")
+    print(f"\n[6/6] resultado")
     print(f"  {ok} OK, {fail} FALLO")
     if fail > 0:
         print("\n  HAY FALLOS -- revisar antes de ejecutar en produccion")
@@ -287,6 +362,8 @@ def main():
     print(TRIGGER_D7C_JUZGA_U_SQL)
     print("\n-- 3. Relajar INSERT para permitir NULL verificada_por en espera_firma:")
     print(TRIGGER_D7C_JUZGA_I_SQL)
+    print("\n-- 4. Limpieza generica (vaciar vp en espera_firma):")
+    print("--    python3 compuerta_d7c.py aplica limpiar_espera_firma() automaticamente")
 
     print("\n--- SQL VUELTA ATRAS ---")
     print(ROLLBACK_SQL)
